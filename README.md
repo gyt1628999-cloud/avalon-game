@@ -485,7 +485,7 @@ Not your usual "AI chatbot" — these AI players **actually act**:
 💡 Advice mode   → AI gives you "thinking + speech" suggestions when it's your turn
                    ← Beginner-friendly
 
-🤖 AI agent      → AI plays for you; you watch 7 AIs battle each other
+🤖 AI agent      → AI plays for you; you watch several AIs battle each other
                    ← See AI vs AI, all "inner voices" visible
 ```
 
