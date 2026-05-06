@@ -7034,28 +7034,6 @@ function recordSubround(g, type, payload) {
   });
 }
 
-// 🔒🔒🔒 全局 AI 发言互斥锁——绝对禁止两个 AI 同时打字
-// 任何 AI 发言（含 typeWriter）开始前必须拿这个锁，结束后释放
-// 这是最后一道防线——即使 React useEffect 出 bug 也能保证串行
-const __aiSpeakLock = {
-  busy: false,
-  queue: [],
-  async acquire() {
-    if (!this.busy) {
-      this.busy = true;
-      return;
-    }
-    // 排队等待
-    await new Promise(resolve => this.queue.push(resolve));
-    this.busy = true;
-  },
-  release() {
-    this.busy = false;
-    const next = this.queue.shift();
-    if (next) next();
-  }
-};
-
 // 打字机效果工具：把一段文本逐字加到 history 最后一项
 async function typeWriter(setGame, fullText, speedMs = 35, entryId = null) {
   const chars = [...fullText];
@@ -7175,10 +7153,19 @@ function Play({
   // 这能防止：useEffect 多次触发（比如 busy 变化、history 变化）时，多个 async 函数并行跑
   const runTokenRef = useRef(0);
   const runningRef = useRef(false); // 是否有 async 任务在跑
-
+  const forceReevaluateRef = useRef(false);
+  const [forceReevaluate, setForceReevaluate] = useState(0);
   useEffect(() => {
     if (game.phase === "reveal") return;
+
     // 🔒 全局门禁：如果有任务在跑，绝不进入
+    // 但是！如果当前 phase 是真人交互 phase（humanXxx），说明用户已经在做选择，runningRef 不应该是 true
+    // 这种情况下强制重置 runningRef——避免之前异常的 wrap 没释放锁导致永久卡死
+    const isHumanInteractPhase = game.phase === "humanPropose" || game.phase === "humanRevise" || game.phase === "humanPickDirection" || game.phase === "humanLeaderOpening" || game.phase === "humanSpeak" || game.phase === "humanVote" || game.phase === "humanMission";
+    if (isHumanInteractPhase && runningRef.current) {
+      console.warn("[useEffect] 检测到真人交互 phase 但 runningRef 卡死，强制释放");
+      runningRef.current = false;
+    }
     if (runningRef.current) return;
     const myToken = ++runTokenRef.current;
     runningRef.current = true;
@@ -7194,6 +7181,17 @@ function Play({
         // 只有当前 token 是最新 token 才释放锁——否则说明已被 cleanup 取消
         if (runTokenRef.current === myToken) {
           runningRef.current = false;
+          // 🔥 关键修复：wrap 结束后，phase 可能已经变化但 useEffect 因为 runningRef 被拦下没跑
+          // 这里手动检查并触发：如果当前 phase 不是触发 wrap 时的 phase，强制重新触发 useEffect
+          // 通过 setGame 加一个 _tick 字段——这会触发组件重渲染，但 useEffect 依赖只有 phase/round/voteRound 不会重跑
+          // 更可靠的方法：直接设置一个 ref 让外层 useEffect 在 render 后检查
+          setTimeout(() => {
+            // 给 React 完成本次渲染时间，然后强制触发再次评估
+            // 通过修改 runTokenRef 让下一次 useEffect 不会被卡（实际上下一次 useEffect 不会自动触发）
+            // 真正解决方案：让外层用一个 effect 监控 runningRef 状态
+            forceReevaluateRef.current = !forceReevaluateRef.current;
+            setForceReevaluate(v => v + 1);
+          }, 0);
         }
       }
     };
@@ -7268,10 +7266,6 @@ function Play({
         pendingSpeechOrder: undefined,
         pendingSpeechIdx: undefined
       }));
-    }
-    // 🆕 真人交互 phase——明确释放 runningRef 让 UI 显示
-    else if (game.phase === "humanPropose" || game.phase === "humanRevise" || game.phase === "humanPickDirection" || game.phase === "humanLeaderOpening") {
-      runningRef.current = false;
     } else {
       runningRef.current = false;
     }
@@ -7280,7 +7274,7 @@ function Play({
     return () => {
       // 不立即重置 runningRef——让 finally 自己处理
     };
-  }, [game.phase, game.round, game.voteRound]); // 🔥 关键：去掉 busy 依赖！
+  }, [game.phase, game.round, game.voteRound, forceReevaluate]); // 🔥 关键：去掉 busy 依赖；加 forceReevaluate 触发自愈
 
   function dismissReveal() {
     const g = {
@@ -7333,14 +7327,6 @@ function Play({
     if (phaseRunLock.current[lockKey]) return;
     if (game.phase !== "leaderOpening") return;
     phaseRunLock.current[lockKey] = true;
-
-    // 🔒🔒 全局 AI 发言锁——绝对串行
-    await __aiSpeakLock.acquire();
-    if (game.phase !== "leaderOpening") {
-      __aiSpeakLock.release();
-      delete phaseRunLock.current[lockKey];
-      return;
-    }
     setBusy(true);
     await sleep(400);
     const placeholderText = "（思考中...）";
@@ -7398,7 +7384,6 @@ function Play({
       await sleep(700);
     } finally {
       delete phaseRunLock.current[lockKey];
-      __aiSpeakLock.release();
       setBusy(false);
     }
   }
@@ -7408,14 +7393,6 @@ function Play({
     if (phaseRunLock.current[lockKey]) return;
     if (game.phase !== "leaderClosing") return;
     phaseRunLock.current[lockKey] = true;
-
-    // 🔒🔒 全局 AI 发言锁
-    await __aiSpeakLock.acquire();
-    if (game.phase !== "leaderClosing") {
-      __aiSpeakLock.release();
-      delete phaseRunLock.current[lockKey];
-      return;
-    }
     phaseRunLock.current[lockKey] = true;
     setBusy(true);
     await sleep(400);
@@ -7458,7 +7435,6 @@ function Play({
       await sleep(700);
     } finally {
       delete phaseRunLock.current[lockKey];
-      __aiSpeakLock.release();
       setBusy(false);
     }
   }
@@ -7531,69 +7507,65 @@ function Play({
           setBusy(false);
           return; // 锁不释放——等真人发言后会进入 submitSpeech 流程
         }
-        // AI 发言——🔒 全局锁包裹，绝对禁止与其他 AI 并发
-        await __aiSpeakLock.acquire();
-        try {
-          // 重新拿一次最新 game state，防止 acquire 等待期间状态变化
-          g = await new Promise(resolve => setGame(prev => {
-            resolve(prev);
-            return prev;
-          }));
-          // 再次确认：phase 还在 discuss，且自己还没发过言
-          if (g.phase !== "discuss") return;
-          const spoken2 = new Set();
-          const idx2 = (() => {
-            for (let i = g.history.length - 1; i >= 0; i--) {
-              if (g.history[i].tag === "队长开场") return i;
-            }
-            return -1;
-          })();
-          if (idx2 >= 0) {
-            g.history.slice(idx2 + 1).forEach(h => {
-              if (/^\d+号$/.test(h.tag) && !h.typing) {
-                spoken2.add(parseInt(h.tag.replace("号", "")) - 1);
-              }
-            });
+        // AI 发言（runDiscussion 本身是串行循环，不需要内层全局锁——只用 phaseRunLock）
+        // 重新拿一次最新 game state
+        g = await new Promise(resolve => setGame(prev => {
+          resolve(prev);
+          return prev;
+        }));
+        // 再次确认：phase 还在 discuss
+        if (g.phase !== "discuss") return;
+        // 再次确认：自己还没发过言
+        const spoken2 = new Set();
+        const idx2 = (() => {
+          for (let i = g.history.length - 1; i >= 0; i--) {
+            if (g.history[i].tag === "队长开场") return i;
           }
-          if (spoken2.has(id)) continue;
-          g = {
-            ...g,
-            currentSpeakerId: id
-          };
-          const typeId = `t${Date.now()}-${id}-${Math.random().toString(36).slice(2, 7)}`;
-          g.history = [...g.history, {
-            tag: sp.seatLabel,
-            text: "",
-            typing: true,
-            _typeId: typeId
-          }];
-          setGame(g);
-          await sleep(350);
-          const r = await aiSpeak(sp, g, "discuss", useAPI);
-          await typeWriter(setGame, r.text, 70, typeId);
-          setGame(prev => ({
-            ...prev,
-            currentSpeakerId: null,
-            stances: {
-              ...(prev.stances || {}),
-              [sp.id]: r.stance
-            },
-            thinkingLog: prev.assistMode === "auto" ? [...(prev.thinkingLog || []), {
-              id: Date.now() + Math.random(),
-              seatLabel: sp.seatLabel,
-              playerId: sp.id,
-              role: sp.role,
-              side: ROLE_DEFS[sp.role].side,
-              thinking: r.thinking || "",
-              speech: r.text,
-              phase: "discuss",
-              round: prev.round
-            }] : prev.thinkingLog || []
-          }));
-          await sleep(900);
-        } finally {
-          __aiSpeakLock.release();
+          return -1;
+        })();
+        if (idx2 >= 0) {
+          g.history.slice(idx2 + 1).forEach(h => {
+            if (/^\d+号$/.test(h.tag) && !h.typing) {
+              spoken2.add(parseInt(h.tag.replace("号", "")) - 1);
+            }
+          });
         }
+        if (spoken2.has(id)) continue;
+        g = {
+          ...g,
+          currentSpeakerId: id
+        };
+        const typeId = `t${Date.now()}-${id}-${Math.random().toString(36).slice(2, 7)}`;
+        g.history = [...g.history, {
+          tag: sp.seatLabel,
+          text: "",
+          typing: true,
+          _typeId: typeId
+        }];
+        setGame(g);
+        await sleep(350);
+        const r = await aiSpeak(sp, g, "discuss", useAPI);
+        await typeWriter(setGame, r.text, 70, typeId);
+        setGame(prev => ({
+          ...prev,
+          currentSpeakerId: null,
+          stances: {
+            ...(prev.stances || {}),
+            [sp.id]: r.stance
+          },
+          thinkingLog: prev.assistMode === "auto" ? [...(prev.thinkingLog || []), {
+            id: Date.now() + Math.random(),
+            seatLabel: sp.seatLabel,
+            playerId: sp.id,
+            role: sp.role,
+            side: ROLE_DEFS[sp.role].side,
+            thinking: r.thinking || "",
+            speech: r.text,
+            phase: "discuss",
+            round: prev.round
+          }] : prev.thinkingLog || []
+        }));
+        await sleep(900);
       }
       setGame(prev => ({
         ...prev,
@@ -8337,7 +8309,6 @@ function Play({
     setBusy(false);
   }
   async function runAutoLeaderOpening() {
-    await __aiSpeakLock.acquire();
     setBusy(true);
     await sleep(400);
     const typeId = `t${Date.now()}-auto-open-${human.id}-${Math.random().toString(36).slice(2, 7)}`;
@@ -8353,26 +8324,21 @@ function Play({
     }];
     g.currentSpeakerId = human.id;
     setGame(g);
-    try {
-      const r = await aiSpeak(human, game, "leaderOpening", useAPI);
-      await typeWriter(setGame, r.text, 70, typeId);
-      setGame(prev => ({
-        ...prev,
-        currentSpeakerId: null,
-        stances: {
-          ...(prev.stances || {}),
-          [human.id]: r.stance
-        },
-        phase: "discuss"
-      }));
-      await sleep(700);
-    } finally {
-      __aiSpeakLock.release();
-      setBusy(false);
-    }
+    const r = await aiSpeak(human, game, "leaderOpening", useAPI);
+    await typeWriter(setGame, r.text, 70, typeId);
+    setGame(prev => ({
+      ...prev,
+      currentSpeakerId: null,
+      stances: {
+        ...(prev.stances || {}),
+        [human.id]: r.stance
+      },
+      phase: "discuss"
+    }));
+    await sleep(700);
+    setBusy(false);
   }
   async function runAutoLeaderClosing() {
-    await __aiSpeakLock.acquire();
     setBusy(true);
     await sleep(400);
     const typeId = `t${Date.now()}-auto-close-${human.id}-${Math.random().toString(36).slice(2, 7)}`;
@@ -8388,23 +8354,19 @@ function Play({
     }];
     g.currentSpeakerId = human.id;
     setGame(g);
-    try {
-      const r = await aiSpeak(human, game, "leaderClosing", useAPI);
-      await typeWriter(setGame, r.text, 70, typeId);
-      setGame(prev => ({
-        ...prev,
-        currentSpeakerId: null,
-        stances: {
-          ...(prev.stances || {}),
-          [human.id]: r.stance
-        },
-        phase: "revise"
-      }));
-      await sleep(700);
-    } finally {
-      __aiSpeakLock.release();
-      setBusy(false);
-    }
+    const r = await aiSpeak(human, game, "leaderClosing", useAPI);
+    await typeWriter(setGame, r.text, 70, typeId);
+    setGame(prev => ({
+      ...prev,
+      currentSpeakerId: null,
+      stances: {
+        ...(prev.stances || {}),
+        [human.id]: r.stance
+      },
+      phase: "revise"
+    }));
+    await sleep(700);
+    setBusy(false);
   }
   async function runAutoRevise() {
     setBusy(true);
@@ -8462,109 +8424,97 @@ function Play({
   // ========== 人类决策 ==========
   function humanPropose() {
     if (pendingTeam.length !== teamSize) return;
-    const g = {
-      ...game
-    };
-    g.history = [...g.history, {
-      tag: "组队",
-      text: `${human.seatLabel}(${human.name}) 选定：${pendingTeam.map(id => g.players[id].seatLabel).join("、")}`
-    }];
-    g.proposedTeam = [...pendingTeam];
-    g.revoteUsed = false;
-    g.phase = "humanPickDirection";
+    const newTeam = [...pendingTeam];
     setPendingTeam([]);
-    setGame(g);
+    setGame(prev => {
+      const me = prev.players.find(p => p.isHuman);
+      return {
+        ...prev,
+        history: [...prev.history, {
+          tag: "组队",
+          text: `${me.seatLabel}(${me.name}) 选定：${newTeam.map(id => prev.players[id].seatLabel).join("、")}`
+        }],
+        proposedTeam: newTeam,
+        revoteUsed: false,
+        phase: "humanPickDirection"
+      };
+    });
   }
   function humanPickDirection(dir) {
-    const g = {
-      ...game
-    };
-    g.speakDirection = dir;
-    const startId = (g.leaderId + (dir === "cw" ? 1 : -1) + g.playerCount) % g.playerCount;
-    g.history = [...g.history, {
-      tag: "发言",
-      text: `${human.seatLabel} 从${dir === "cw" ? "左手起" : "右手起"}，由 ${g.players[startId].seatLabel} 开始`
-    }];
-    g.phase = "humanLeaderOpening";
-    setGame(g);
+    setGame(prev => {
+      const me = prev.players.find(p => p.isHuman);
+      const startId = (prev.leaderId + (dir === "cw" ? 1 : -1) + prev.playerCount) % prev.playerCount;
+      return {
+        ...prev,
+        speakDirection: dir,
+        history: [...prev.history, {
+          tag: "发言",
+          text: `${me.seatLabel} 从${dir === "cw" ? "左手起" : "右手起"}，由 ${prev.players[startId].seatLabel} 开始`
+        }],
+        phase: "humanLeaderOpening"
+      };
+    });
   }
   function humanSubmitOpening(text) {
-    const g = {
-      ...game
-    };
-    g.history = [...g.history, {
-      tag: "队长开场",
-      text: text.trim() || "（无开场）",
-      speakerId: human.id
-    }];
-    g.phase = "discuss";
-    setGame(g);
     setSpeech("");
+    setGame(prev => ({
+      ...prev,
+      history: [...prev.history, {
+        tag: "队长开场",
+        text: text.trim() || "（无开场）",
+        speakerId: prev.players.find(p => p.isHuman).id
+      }],
+      phase: "discuss"
+    }));
   }
   function humanSubmitClosing(text) {
-    // 🔒 安全释放：以防之前的 AI 流程异常退出导致锁没释放
-    if (__aiSpeakLock.busy) {
-      __aiSpeakLock.busy = false;
-    }
-    const g = {
-      ...game
-    };
-    g.history = [...g.history, {
-      tag: "队长总结",
-      text: text.trim() || "（无总结）",
-      speakerId: human.id
-    }];
-    g.phase = "revise";
-    setGame(g);
     setSpeech("");
+    setGame(prev => ({
+      ...prev,
+      history: [...prev.history, {
+        tag: "队长总结",
+        text: text.trim() || "（无总结）",
+        speakerId: prev.players.find(p => p.isHuman).id
+      }],
+      phase: "revise"
+    }));
   }
   function humanKeep() {
-    if (__aiSpeakLock.busy) {
-      __aiSpeakLock.busy = false;
-    }
-    const g = {
-      ...game
-    };
-    g.history = [...g.history, {
-      tag: "确认",
-      text: `${human.seatLabel} 维持原队伍`
-    }];
-    g.phase = "vote";
-    setGame(g);
+    setGame(prev => ({
+      ...prev,
+      history: [...prev.history, {
+        tag: "确认",
+        text: `${prev.players.find(p => p.isHuman).seatLabel} 维持原队伍`
+      }],
+      phase: "vote"
+    }));
   }
   function humanRevise() {
-    if (__aiSpeakLock.busy) {
-      __aiSpeakLock.busy = false;
-    }
-    const g = {
-      ...game
-    };
-    g.revoteUsed = true;
-    g.stances = {};
-    g.history = [...g.history, {
-      tag: "重选",
-      text: `${human.seatLabel} 决定重新组队`
-    }];
-    g.phase = "humanRevise";
     setPendingTeam([]);
-    setGame(g);
+    setGame(prev => ({
+      ...prev,
+      revoteUsed: true,
+      stances: {},
+      history: [...prev.history, {
+        tag: "重选",
+        text: `${prev.players.find(p => p.isHuman).seatLabel} 决定重新组队`
+      }],
+      phase: "humanRevise"
+    }));
   }
   function humanSubmitRevised() {
-    if (__aiSpeakLock.busy) {
-      __aiSpeakLock.busy = false;
-    }
     if (pendingTeam.length !== teamSize) return;
-    const g = {
-      ...game
-    };
-    g.proposedTeam = [...pendingTeam];
-    g.history = [...g.history, {
-      tag: "组队",
-      text: `${human.seatLabel} 重选：${pendingTeam.map(id => g.players[id].seatLabel).join("、")}`
-    }];
-    g.phase = "vote";
+    const newTeam = [...pendingTeam];
     setPendingTeam([]);
-    setGame(g);
+    setGame(prev => ({
+      ...prev,
+      proposedTeam: newTeam,
+      history: [...prev.history, {
+        tag: "组队",
+        text: `${prev.players.find(p => p.isHuman).seatLabel} 重选：${newTeam.map(id => prev.players[id].seatLabel).join("、")}`
+      }],
+      phase: "vote"
+    }));
   }
   async function humanAssass(targetId) {
     const ass = game.players.find(p => p.role === "Assassin");
