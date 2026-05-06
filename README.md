@@ -1,6 +1,7 @@
 <div align="center">
 
-![Avalon Banner](readme-assets/banner.png)
+<img width="1200" height="360" alt="banner" src="https://github.com/user-attachments/assets/2ed5a56a-5089-4b2c-88a5-47cef355b36a" />
+
 
 # 🏰 阿瓦隆 · Avalon
 
