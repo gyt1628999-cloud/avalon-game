@@ -1,16 +1,15 @@
 <div align="center">
 
-<img width="1200" height="360" alt="banner" src="https://github.com/user-attachments/assets/2ed5a56a-5089-4b2c-88a5-47cef355b36a" />
-
+![Avalon Banner](readme-assets/banner.png)
 
 # 🏰 阿瓦隆 · Avalon
 
-### 王座之下，忠诚与背叛同席而坐
+### 🤖 一个人的桌游 · 你 vs 大模型 AI 玩家
 
-**一个人也能玩的阿瓦隆 · AI 玩家会演戏 · 单文件 HTML 即开即玩**
+**这不是联机游戏，也不是双人对战——你是桌上唯一的人类，其他几位"骑士"都是接入 AI 的真演员。**
+他们会装好人、装糊涂、互相 cue、合伙演戏。
 
-[![React](https://img.shields.io/badge/React-18-61dafb?logo=react)](https://react.dev) [![DeepSeek](https://img.shields.io/badge/AI-DeepSeek_V4-7c3aed)](https://platform.deepseek.com) [![Kimi](https://img.shields.io/badge/AI-Kimi-ff6b00)](https://platform.moonshot.cn) [![Qianfan](https://img.shields.io/badge/AI-百度千帆-2932e1)](https://qianfan.baidubce.com) [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-
+[![React](https://img.shields.io/badge/React-18-61dafb?logo=react)](https://react.dev) [![Solo](https://img.shields.io/badge/玩法-单人_vs_AI-7c3aed)]() [![Free](https://img.shields.io/badge/智谱GLM--4--Flash-永久免费-88b070)](https://bigmodel.cn) [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 [🇨🇳 中文](#-中文文档) · [🇬🇧 English](#-english)
 
@@ -36,25 +35,125 @@
 >
 > *他们与暗影骑士团混入了护卫队。要在小舟靠岸之前——**刺死那位知晓圣杯秘密的人——梅林**。*
 >
-> *—— 故事在这里展开。*
+> *—— 故事在这里展开。但这一次，桌上只有你一个真人。*
 
 ---
 
-<img width="2549" height="1403" alt="7515d50c5e8b9cc2f7c9c45bd25dd58a" src="https://github.com/user-attachments/assets/7b60394a-2748-4566-b36f-cb8d8ec9fc6e" />
-
 ## 🇨🇳 中文文档
 
-### 💡 一句话介绍
+### 💡 这个游戏到底是什么
 
-> 一个人也能玩 5-10 人桌游！打开网页就开局，AI 玩家会装好人、装糊涂、互相 cue、合伙演戏。
+> **阿瓦隆**是一款 5-10 人的经典身份推理桌游。但凑齐这么多人不容易——所以这个项目让你**一个人也能玩**：
+> 桌上 4-9 个 AI 玩家，每人有独立人格、独立策略、独立"心声"，会推理、会演戏、会互相质疑。
+> 接入大模型 API 后，AI 的发言和真人几乎没区别。
 
-### 🎬 这是什么
+### 🤖 桌上只有你一个人是真的
 
-**阿瓦隆**（The Resistance: Avalon）是一款基于亚瑟王传说的**身份推理桌游**——你将扮演一位骑士，与同伴们护送奄奄一息的亚瑟王前往圣岛。但船上有人是叛徒。蓝方靠完成 3 次任务获胜，红方靠破坏任务**或最后刺杀梅林**翻盘。
+打开游戏后，你会**坐进一个 7 人或 5/6/8/9/10 人的桌子**——但其他人**全部是 AI**。
 
-凑齐 5-10 个人才能玩？这里**一个人**就能开局。
+**这不是普通的"AI 当陪练"** ——这里的 AI 玩家**会真演戏**：
 
-### 🃏 谁在船上
+<table>
+<tr>
+<td width="50%">
+
+#### 🎭 AI 角色扮演
+
+- **AI 梅林会装糊涂**——绝不精准指认（怕被 AI 刺客盯上），用"我感觉""说不清"模糊词
+- **AI 莫甘娜装梅林**——故意指好人陷害，让 AI 派西维尔分不清真假
+- **AI 莫德雷德主动出击**——梅林看不见他，他大胆装好人推理
+- **AI 奥伯伦发暗号**——孤独红方靠"勉强反对干净人"试探搭子
+- **AI 刺客整局观察**——每轮记录谁像梅林（包括你），最后给你致命一刀
+
+</td>
+<td width="50%">
+
+#### 🧠 AI 真在思考
+
+- **AI 会算双队对比**——"3 号在第 1 轮 + B 失败，第 2 轮 + C 成功 → B 红 C 蓝"
+- **AI 会记投票模式**——某号反对率高 = 梅林嫌疑大
+- **AI 改主意会解释**——"我上轮反对，听了 5 号的觉得有道理才改"
+- **AI 会避嫌**——红方 bom 完下一轮发言会克制
+- **AI 会反思**——"全场都支持的车居然失败了……我们被骗了"
+- **AI 有沉浸感**——偶尔会说"我以骑士之名担保""王者在上""火光摇曳间有些不对劲"
+
+</td>
+</tr>
+</table>
+
+### 🎮 你和 AI 怎么互动
+
+```
+🧑 自己玩       → 你亲自发言、投票、做任务，AI 是你的对手
+                  ← 推荐！最有沉浸感
+
+💡 建议模式     → 轮到你时，AI 给你"思路+话术"建议，你自己决定
+                  ← 适合新手 / 不想敲字
+
+🤖 AI 代理      → AI 完全替你玩，你纯观战 7 个 AI 互相博弈
+                  ← 看 AI 之间的对决，能看到所有 AI 的"心声"
+```
+
+### 🎯 AI 玩家发言长这样
+
+> 这是一段**真实游戏录像**（节选 · 你是 1 号，其他全是 AI）：
+
+```
+1号(队长开场) [你]：信息少，先随便带几个看看。3、5、7号上车。
+                   我自己也在车上担保。
+
+3号 [AI]：嗯…我跟一把，但 7号上轮没动静我有点犹豫。
+
+5号 [AI]：我先反对。不是不信 1号你，是 7号那波太安静了，
+        不能就这么放过去。
+
+7号 [AI]：哎，5号别盯我，我就是没想好。让我想想啊…
+        1号你这队里其实 3号最稳，但 5号你反对的逻辑我没看懂。
+
+(投票后任务失败——你和其他 AI 都看到这一轮失败)
+
+3号 [AI]：卧槽这都失败了？我跟错车了！
+
+5号 [AI]：我说什么来着，7号果然有问题。
+
+(其实 5 号是莫德雷德 + 7 号是刺客 —— 但你还不知道)
+```
+
+### 🚀 一分钟开始
+
+#### 方法 1：直接玩（最简单）
+```
+下载 avalon.html → 双击打开 → 立刻能玩
+（无 AI 模式用本地预设台词，AI 会比较模板化）
+```
+
+#### 方法 2：接入大模型 AI（强烈推荐）
+```
+1. 打开网页
+2. 点右上角 ⚙ AI 设置
+3. 选择 AI 服务商（推荐智谱 GLM——有永久免费模型）
+4. 复制 API Key 填入
+5. 点"测试 Key" → 绿色 ✓ → 开始游戏
+```
+
+### 💰 接入大模型多少钱
+
+接入 AI 后游戏体验完全不同——AI 会真实推理、装好人、用情绪词。**强烈推荐至少试一次**。
+
+| AI 服务商 | 价格 | 特点 | 推荐场景 |
+|----|----|----|----|
+| 🆓 **智谱 GLM** | **GLM-4-Flash 永久免费** + 实名送 500 万 Token | 清华团队·中文最强 | **首推！0 成本玩** |
+| 🆓 **百度千帆** | 新用户免费额度 | 国内访问最稳 | 备选 |
+| 💰 **DeepSeek V4** | ¥10 起，按量付费 | 推理质量最好 | 想要顶级体验 |
+| 💰 **Kimi** | ¥1 起，按量付费 | 中文最地道 | 想要文学性发言 |
+
+> 💡 一局游戏大约消耗 ¥0.1-0.3（付费模型）；智谱 GLM-4-Flash **完全 0 成本**
+
+### 🃏 你和 AI 玩家会扮演哪些角色
+
+![Roles](readme-assets/roles.png)
+
+每局游戏里，你和 AI 会**随机分到角色**——你可能是梅林、刺客、奥伯伦……AI 们会拿到剩下的角色。
 
 #### 🔵 蓝方 · 亚瑟王的忠臣
 
@@ -64,27 +163,27 @@
 
 **🪄 梅林**
 
-*传说中的伟大魔法师，亚瑟王的挚友与导师。曾预言"莫德雷德将毁灭大不列颠"。*
+*传说中的伟大魔法师，亚瑟王的挚友与导师。*
 
-知晓所有红方（除莫德雷德）。但若被刺客认出，王者将永远沉睡。
+知晓所有红方（除莫德雷德）。但若被 AI 刺客认出，王者将永远沉睡。
 
 </td>
 <td width="33%" valign="top">
 
 **🛡 派西维尔**
 
-*亚瑟王最信任的圆桌骑士。圣杯之行由他护卫。*
+*亚瑟王最信任的圆桌骑士。*
 
-视野中有 2 个候选梅林（一真一假），需用观察辨认。可装作梅林吸引刺客火力。
+视野中有 2 个候选梅林（一真一假），需用观察辨认。
 
 </td>
 <td width="33%" valign="top">
 
 **⚔️ 忠臣**
 
-*亚瑟王的圆桌骑士。剑曾在卡米洛特发过誓。*
+*亚瑟王的圆桌骑士。*
 
-无视野，靠骑士的直觉、伙伴的脸色、任务的胜败找出叛徒。
+无视野，靠观察任务结果、AI 投票、AI 发言找出叛徒。
 
 </td>
 </tr>
@@ -100,25 +199,25 @@
 
 *莫德雷德派系最锋利的剑。*
 
-整局像普通骑士般谈笑，眼睛却从未离开过梅林。蓝方完成 3 次任务时，他将拔出匕首——一击得手，王国陷落。
+蓝方完成 3 次任务时拔剑指认梅林——刺中则红方反败为胜。
 
 </td>
 <td width="33%" valign="top">
 
 **🌒 莫甘娜**
 
-*亚瑟王同母异父的姐姐。曾以迷药与王共度禁忌之夜，孕下莫德雷德。*
+*亚瑟王同母异父的姐姐。*
 
-伪装成梅林，让派西维尔陷入混乱。说话像有视野——但故意指错好人。
+伪装成梅林，让派西维尔陷入混乱。
 
 </td>
 <td width="33%" valign="top">
 
 **👑 莫德雷德**
 
-*亚瑟王与莫甘娜之子，被父亲下令放逐的婴孩。剑栏之上几乎砍下王者头颅。*
+*亚瑟王与莫甘娜之子。*
 
-最大优势：梅林看不见他。可堂堂正正坐在桌前，假装最忠诚的骑士。
+最大优势：梅林看不见他。可以堂堂正正坐在桌前装最忠诚的骑士。
 
 </td>
 </tr>
@@ -127,7 +226,7 @@
 
 **🌫 奥伯伦**
 
-*精灵王。受湖中女仙薇薇安委托混入护卫队。不是人类，扭曲的灵魂只为阻止亚瑟复活。*
+*精灵王。*
 
 不认识任何同伴，同伴也认不出他。一场孤独的破坏。
 
@@ -136,9 +235,9 @@
 
 **🐍 莫德雷德的爪牙**
 
-*暗影骑士团成员。曾是圆桌骑士之一，剑栏战场上选择了背叛。*
+*暗影骑士团成员。*
 
-认识所有红方同伴（除奥伯伦）。装作忠诚，让圣杯之水永远到不了王者唇边。
+认识所有红方同伴（除奥伯伦），装作忠诚搞破坏。
 
 </td>
 <td width="33%" valign="top">
@@ -147,132 +246,36 @@
 </tr>
 </table>
 
-<img width="1200" height="800" alt="roles" src="https://github.com/user-attachments/assets/9352817a-e58c-4f5d-8b5a-89ca9333ad7e" />
-
-
-### 😎 这版本不一样在哪
-
-不是普通"AI 当陪练"——这里的 AI 玩家**会真演戏**：
-
-<table>
-<tr>
-<td width="50%">
-
-#### 🎭 角色扮演到位
-
-- **梅林会装糊涂**——绝不精准指认（怕被刺客盯上），用"我感觉""说不清"模糊词
-- **莫甘娜装梅林**——故意指好人陷害，让派西维尔分不清真假
-- **莫德雷德主动出击**——梅林看不见他，他大胆装好人推理
-- **奥伯伦发暗号**——孤独红方靠"勉强反对干净人"试探搭子
-- **刺客整局观察**——每轮记录谁像梅林，最后给你致命一刀
-
-</td>
-<td width="50%">
-
-#### 🧠 AI 真在思考
-
-- **会算双队对比**——"3 号在第 1 轮 + B 失败，第 2 轮 + C 成功 → B 红 C 蓝"
-- **会记投票模式**——某号反对率高 = 梅林嫌疑大
-- **会改主意会解释**——"我上轮反对，听了 5 号的觉得有道理才改"
-- **会避嫌**——红方 bom 完下一轮发言会克制
-- **会反思**——"全场都支持的车居然失败了……我们被骗了"
-
-</td>
-</tr>
-</table>
-
-### 🎮 三种玩法
-
-```
-🧑 自己玩       → 你亲自发言、投票、做任务         ← 推荐
-💡 建议模式     → AI 给你"思路+话术"，你自己决定    ← 适合新手
-🤖 AI 代理      → AI 完全替你玩，你纯观战          ← 看 AI 互相博弈
-```
-
-### 🎯 AI 玩家发言长这样
-
-> 这是一段真实游戏录像（节选）：
-
-```
-1号(队长开场)：信息少，先随便带几个看看。3、5、7号上车。
-              我自己也在车上担保。
-
-3号：嗯…我跟一把，但 7号上轮没动静我有点犹豫。
-
-5号：我先反对。不是不信 1号你，是 7号那波太安静了，
-     不能就这么放过去。
-
-7号：哎，5号别盯我，我就是没想好。让我想想啊…
-     1号你这队里其实 3号最稳，但 5号你反对的逻辑我没看懂。
-
-(投票后任务失败)
-
-3号：卧槽这都失败了？我跟错车了！
-
-5号：我说什么来着，7号果然有问题。
-```
-
-### 🚀 一分钟开始
-
-#### 方法 1：直接玩（最简单）
-```
-下载 avalon.html → 双击打开 → 立刻能玩
-（无 AI 模式用本地预设台词，体验有限但能跑流程）
-```
-
-#### 方法 2：接入 AI（强烈推荐，体验完全不同）
-```
-1. 打开网页
-2. 点右上角 ⚙ AI 设置
-3. 选择 provider（百度千帆免费 / DeepSeek / Kimi）
-4. 复制 API Key 填入
-5. 点"测试 Key"→ 绿色 ✓ → 开始游戏
-```
-
-### 💰 接入 AI 多少钱
-
-| AI 服务商 | 价格 | 速度 | 推荐场景 |
-|----|----|----|----|
-| 🆓 **百度千帆** | **新用户免费额度**（实名后） | 快 | **首次试玩推荐** |
-| 💰 **DeepSeek V4** | ¥10 起，按用量计费 | 中 | 推理质量最好 |
-| 💰 **Kimi** | ¥1 起 | 中 | 中文表达流畅 |
-
-> 💡 一局游戏大约消耗 ¥0.1-0.3，¥10 能玩几十局
-
 ### 🎲 一轮怎么玩
 
-<img width="1200" height="700" alt="flow" src="https://github.com/user-attachments/assets/7fd1f4bd-2b4e-49e7-95dc-3bd15941ebef" />
-
+![Flow](readme-assets/flow.png)
 
 ```
-1. 队长选 N 人组队（N 由本轮决定）
+1. 队长选 N 人组队（队长可能是你、也可能是 AI）
    ↓
 2. 队长选发言方向（左手起 / 右手起）
    ↓
 3. 队长开场——解释为什么这么组队
    ↓
-4. 玩家依序发言——表态支持/反对，分析推理
+4. 玩家依序发言（你和 AI 轮流说）
    ↓
-5. 队长总结——决定维持原队 or 重新组队（每轮最多重组一次）
+5. 队长总结——决定维持原队 or 重新组队
    ↓
-6. 全员投票——过半赞成 → 进任务；否则换下一位队长
+6. 全员投票（你和 AI 同时投）
    ↓
 7. 任务执行——队员暗投成功/失败
-   1 张失败票 = 任务失败
-   (7-10 人局第 4 轮例外：需 2 张失败票)
    ↓
 ↻ 循环 5 轮
-   蓝方先完成 3 次任务 → 进入刺杀环节
-   红方先让 3 次任务失败 → 直接胜利
-   连续 5 次流局（队伍被否决）→ 红方直接胜利
+   蓝方 3 胜 → 进入刺杀环节
+   红方 3 胜 / 5 次连续流局 → 红方直接胜利
 ```
 
 #### 🗡 刺杀环节（蓝方达成 3 胜时触发）
 
 ```
-1. 公开揭晓所有红方身份
-2. 红方按随机起点 + 顺时针顺序公开讨论梅林是谁（最多 2 轮）
-3. 刺客最终决定刺杀目标
+1. 揭晓所有红方身份（你和 AI 都看到）
+2. AI 红方公开讨论梅林是谁（你也参与，如果你是红方）
+3. AI 刺客（或者你，如果你是刺客）做最终决定
    ↓
    ✓ 刺中梅林 → 红方反败为胜
    ✗ 刺错 → 蓝方真正胜利
@@ -284,12 +287,12 @@
 <tr><th>角色</th><th>常见死法</th><th>怎么避免</th></tr>
 <tr>
 <td>🔵 梅林</td>
-<td>第 1 轮就精准指认红方 → 刺客锁定你</td>
+<td>第 1 轮就精准指认红方 → AI 刺客锁定你</td>
 <td>第 1 轮装得和普通好人一样模糊</td>
 </tr>
 <tr>
 <td>🔵 派西</td>
-<td>公开说"X 号是真梅林" → 刺客谢谢你</td>
+<td>公开说"X 号是真梅林" → AI 刺客谢谢你</td>
 <td>永远保持"两个我都不太确定"</td>
 </tr>
 <tr>
@@ -312,22 +315,22 @@
 ### 🛠 技术栈
 
 - **前端**：单文件 React 18 + Tailwind CSS（无构建步骤！）
-- **AI**：DeepSeek V4 / Kimi / 百度千帆（OpenAI 兼容 API）
-- **存储**：浏览器 localStorage（不上传服务器）
+- **AI 接入**：智谱 GLM / DeepSeek V4 / Kimi / 百度千帆（OpenAI 兼容 API）
+- **存储**：浏览器 localStorage（API Key 不上传服务器）
 - **部署**：纯静态 HTML，可部署到任何静态服务器
 
 ### 📂 项目结构
 
 ```
 avalon/
-├── avalon.html          # 整个游戏（一个文件，约 7000 行）
-├── index.html           # 同上的副本（GitHub Pages 入口）
-├── README.md            # 这个文件
+├── avalon.html          ← 整个游戏（一个文件，约 7000 行）
+├── index.html           ← 同上的副本（GitHub Pages 入口）
+├── README.md            ← 项目介绍
 ├── readme-assets/
-│   ├── banner.png       # 顶部横幅
-│   ├── roles.png        # 角色介绍图
-│   └── flow.png         # 流程图
-└── 阿瓦隆-1分钟入门.pdf   # 速查手册（A4 单页）
+│   ├── banner.png       ← 顶部横幅
+│   ├── roles.png        ← 角色介绍图
+│   └── flow.png         ← 流程图
+└── 阿瓦隆-1分钟入门.pdf   ← 速查手册（A4 单页）
 ```
 
 ### 🚀 部署到 GitHub Pages
@@ -342,19 +345,28 @@ avalon/
 ### 🤔 常见问题
 
 <details>
+<summary><b>这是网络对战游戏吗？能跟朋友联机吗？</b></summary>
+
+**不是网络对战**——这是**纯单人**游戏。桌上其他玩家全部是 AI（接入大模型驱动）。
+你不需要找队友，不需要等人，打开就能玩。AI 玩家有独立人格、独立策略，发言推理像真人。
+
+</details>
+
+<details>
 <summary><b>API Key 测试失败显示 "Failed to fetch" 怎么办？</b></summary>
 
 通常是网络问题：
-- 切换到**百度千帆**（国内最稳）
+- 切换到**智谱 GLM** 或**百度千帆**（国内最稳）
 - 关闭浏览器扩展（广告拦截器、隐私插件可能拦截请求）
-- 切换网络（手机热点 / VPN 节点）
+- 切换网络（手机热点 / 不同网络）
 
 </details>
 
 <details>
 <summary><b>不接入 AI 也能玩吗？</b></summary>
 
-可以！游戏内置本地预设台词，不接入 AI 也能跑完整流程。但 AI 玩家的发言会**比较模板化**，没有真实推理。建议至少试一次接入 AI 的体验，差别很大。
+可以！游戏内置本地预设台词，不接入 AI 也能跑完整流程。但 AI 玩家的发言会**比较模板化**，没有真实推理。
+**强烈推荐至少试一次接入 AI 的体验，差别巨大**。智谱 GLM-4-Flash **永久免费**，0 成本就能体验。
 
 </details>
 
@@ -369,7 +381,7 @@ avalon/
 </details>
 
 <details>
-<summary><b>能跨设备玩吗（手机/电脑同步）？</b></summary>
+<summary><b>能跨设备玩吗？比如手机和电脑同步？</b></summary>
 
 不能。游戏存档存在浏览器 localStorage 里，换设备就要重开。如果想保留某局战绩，可以截图保存。
 
@@ -432,35 +444,43 @@ MIT — 自由使用、修改、分发
 >
 > *They mingle among the loyal knights. Their goal: kill the only one who knows the Grail's secret—**Merlin**—before the boat reaches shore.*
 >
-> *—— Here the story begins.*
+> *—— Here the story begins. But this time, you are the only human at the table.*
 
-### 💡 What is this
+### 🤖 You vs AI Players — Solo Avalon
 
-> Play 5-10 player Avalon by yourself. Open the web page, AI players will act like real humans — bluffing, deducing, calling each other out, even covering for partners.
+> **Avalon** is a classic 5-10 player social deduction board game. But getting that many people together is hard.
+> This project lets you **play alone**: 4-9 AI players at the table, each with unique personality, strategy, and "inner voice".
+> They reason, they bluff, they accuse each other. With LLM API connected, AI speech is nearly indistinguishable from real humans.
 
 ### 🎬 What's special
 
 Not your usual "AI chatbot" — these AI players **actually act**:
 
 #### 🎭 Role-playing on point
-- **Merlin plays dumb** — never points fingers precisely (assassin is watching), uses vague words
-- **Morgana fakes Merlin** — deliberately accuses good guys to confuse Percival
-- **Mordred goes offensive** — Merlin can't see him, so he boldly "deduces" as a good knight
-- **Oberon sends signals** — lone evil player tries to find partners via subtle speech
-- **Assassin keeps notebook** — quietly tracks who looks like Merlin every round
+- **AI Merlin plays dumb** — never points fingers precisely (assassin AI is watching), uses vague words
+- **AI Morgana fakes Merlin** — deliberately accuses good guys to confuse Percival
+- **AI Mordred goes offensive** — Merlin can't see him, so he boldly "deduces" as a good knight
+- **AI Oberon sends signals** — lone evil player tries to find partners via subtle speech
+- **AI Assassin keeps notebook** — quietly tracks who looks like Merlin every round (including you)
 
 #### 🧠 AI actually thinks
 - **Cross-team comparison** — "Player 3 was in failed Round 1 with B, success Round 2 with C → B is evil, C is good"
 - **Vote pattern tracking** — high opposition rate = Merlin suspect
 - **Mind-change explanations** — "I opposed last round, but #5's argument convinced me"
 - **Post-failure reactions** — "Wow that failed", "Knew it was suspicious"
+- **Immersion lines** — "I swear on my honor as a knight", "Something feels off in the firelight"
 
 ### 🎮 Three play modes
 
 ```
-🧑 Self play     → You speak, vote, mission personally       ← Recommended
-💡 Advice mode   → AI gives "thinking + speech", you decide  ← Beginner-friendly
-🤖 AI agent      → AI plays for you, you just watch          ← See AI vs AI
+🧑 Self play     → You speak, vote, mission personally; AI players are opponents
+                   ← Recommended! Most immersive
+
+💡 Advice mode   → AI gives you "thinking + speech" suggestions when it's your turn
+                   ← Beginner-friendly
+
+🤖 AI agent      → AI plays for you; you watch 7 AIs battle each other
+                   ← See AI vs AI, all "inner voices" visible
 ```
 
 ### 🚀 Quick start
@@ -473,11 +493,12 @@ Download avalon.html → Double-click → Play (no AI, uses local presets)
 Open page → ⚙ AI Settings → Pick provider → Enter API Key → Test
 ```
 
-**3 AI providers** (only one active at a time):
+**4 AI providers** (only one active at a time):
 
 | Provider | Price | Notes |
 |----|----|----|
-| 🆓 **Baidu Qianfan** | **Free quota** for new users | Most stable in China |
+| 🆓 **Zhipu GLM** | **GLM-4-Flash forever free** + 5M tokens after ID verification | Tsinghua team, best Chinese; **TOP PICK** |
+| 🆓 **Baidu Qianfan** | Free quota for new users | Most stable in China |
 | 💰 **DeepSeek V4** | Pay-as-you-go, ¥10 minimum | Strong reasoning |
 | 💰 **Kimi** | Pay-as-you-go, ¥1 minimum | Best Chinese expression |
 
@@ -502,14 +523,13 @@ Open page → ⚙ AI Settings → Pick provider → Enter API Key → Test
 ### 🎲 One round
 
 ```
-1. Leader picks N players (N depends on round)
+1. Leader picks N players (could be you or AI)
 2. Leader chooses speaking direction
 3. Leader's opening speech
-4. Players speak in order
+4. Players speak in order (you and AIs take turns)
 5. Leader's summary (keep team or revise)
-6. Vote (majority approves → mission; otherwise next leader)
+6. Vote (you and AIs vote together)
 7. Mission (secret success/fail)
-   1 fail = mission fails (Round 4 of 7-10p needs 2 fails)
 ```
 
 **Win conditions**:
@@ -519,7 +539,7 @@ Open page → ⚙ AI Settings → Pick provider → Enter API Key → Test
 ### 🛠 Tech stack
 
 - **Frontend**: Single-file React 18 + Tailwind CSS (no build step!)
-- **AI**: DeepSeek V4 / Kimi / Baidu Qianfan (OpenAI-compatible API)
+- **AI**: Zhipu GLM / DeepSeek V4 / Kimi / Baidu Qianfan (OpenAI-compatible API)
 - **Storage**: Browser localStorage (no server upload)
 - **Deploy**: Pure static HTML, deploy anywhere
 
@@ -561,5 +581,7 @@ Story content draws from Arthurian legend and Celtic mythology.
 **🏰 May the realm of Logres be yours, brave knight. 🏰**
 
 *愿罗格里斯王国永属于你，勇敢的骑士。*
+
+**🤖 Solo · You vs AI · No Multiplayer**
 
 </div>
