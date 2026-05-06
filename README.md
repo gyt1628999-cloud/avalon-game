@@ -40,7 +40,8 @@
 
 ---
 
-<img width="2549" height="1403" alt="7515d50c5e8b9cc2f7c9c45bd25dd58a" src="https://github.com/user-attachments/assets/6f18f76d-b2f1-4853-b3a6-e5c78e711e3b" />
+<img width="2549" height="1403" alt="2a1a5f7b44c79045d2055ff18e74afe1" src="https://github.com/user-attachments/assets/c786889e-84de-4904-abd3-6e087e8db185" />
+
 
 
 ## 🇨🇳 中文文档
