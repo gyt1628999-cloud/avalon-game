@@ -110,8 +110,9 @@ body {
 .story-side p strong {
   font-weight: 600;
   font-style: italic;
-  text-shadow: 0 0 8px currentColor;
-  opacity: 0.95;
+  color: rgba(230,180,80,0.98);
+  text-shadow: 0 0 8px rgba(230,180,80,0.4);
+  opacity: 1;
 }
 .story-side p em {
   font-style: italic;
@@ -892,12 +893,23 @@ function aiProposeTeam(leader, game) {
   if (isEvil) {
     const evilTeam = leader.knowledge.sees.map(s => s.id);
     const team = includeSelf ? [leader.id] : [];
-    const aggr = 0.4 + game.round * 0.15;
-    if (Math.random() < aggr && evilTeam.length > 0) {
-      const e = pick(evilTeam);
-      if (!team.includes(e)) team.push(e);
+    // 第 1 轮 2 人队：绝不带认识的红方搭子（怕双 bom 暴露）
+    // 但是奥伯伦不在 sees 里，所以"误带奥伯伦"还是可能发生（这是合理的）
+    const isFirstRoundTwoPersonTeam = game.round === 0 && teamSize === 2;
+    if (!isFirstRoundTwoPersonTeam) {
+      const aggr = 0.4 + game.round * 0.15;
+      if (Math.random() < aggr && evilTeam.length > 0) {
+        const e = pick(evilTeam);
+        if (!team.includes(e)) team.push(e);
+      }
     }
-    while (team.length < teamSize) team.push(pick(allIds.filter(id => !team.includes(id))));
+    // 第 1 轮 2 人队红方队长：从"认识的搭子之外的人"里随机选
+    // —— 这样也可能误选到奥伯伦（这是合理的双 bom 场景）
+    while (team.length < teamSize) {
+      const candidates = allIds.filter(id => !team.includes(id) && !evilTeam.includes(id));
+      const pool = candidates.length > 0 ? candidates : allIds.filter(id => !team.includes(id));
+      team.push(pick(pool));
+    }
     return team;
   } else {
     const trust = computeTrust(leader, game);
@@ -915,19 +927,60 @@ function computeTrust(viewer, game) {
   game.missionResults.forEach(m => {
     if (m.fails > 0) m.team.forEach(id => s[id] -= 10 * m.fails);else m.team.forEach(id => s[id] += 5);
   });
+  // 🆕 已经被硬推理"全员红方"暴露的玩家——拉到底（无论是谁都不会带他们）
+  game.missionResults.forEach(m => {
+    // 全员暴露：失败票 = 队伍人数
+    if (!m.success && m.fails === m.team.length) {
+      m.team.forEach(id => s[id] -= 1000); // 直接拉到地心
+    }
+    // 几乎全员暴露：失败票 = 队伍人数 - 1（队伍 ≥3 人）
+    else if (!m.success && m.team.length > 2 && m.fails === m.team.length - 1) {
+      m.team.forEach(id => s[id] -= 50); // 强烈不信任
+    }
+  });
   return s;
 }
 
-// 关键修复：自己在车上的话默认必须支持（红方除外的极端情况）
+// 关键修复：自己在车上的话默认支持（除非车上其他人特别可疑）
 function aiVote(player, team, game) {
   const stance = game.stances?.[player.id];
-  // 自己在车上 → 必须投赞成（修 bug：之前自己在车上还反对）
-  if (team.includes(player.id)) return true;
+
+  // 🆕 自己在车上时——默认支持，但如果车上其他人非常可疑可以反对
+  if (team.includes(player.id)) {
+    // 蓝方好人：如果车上其他人有"已暴露红方"或"明确视野中的红方"，可以反对
+    const isEvil = ROLE_DEFS[player.role].side === "evil";
+    if (!isEvil) {
+      const trust = computeTrust(player, game);
+      const otherIds = team.filter(id => id !== player.id);
+      // 看车上其他人的信任度——任何一个 < -50（暴露红方）或视野里的红方 → 反对
+      const hasExposedEvil = otherIds.some(id => trust[id] <= -50);
+      const hasKnownEvil = player.knowledge?.sees && (player.role === "Merlin" || player.role === "Percival") && otherIds.some(id => player.knowledge.sees.some(s => s.id === id && s.label !== "真假梅林"));
+      // 梅林/普通好人看到车上有暴露红方 → 反对（车上有自己也反对是合理的）
+      if (hasExposedEvil || hasKnownEvil) {
+        // 但 stance 是 yes 的还是要尊重（玩家在发言阶段表态过支持）
+        if (stance !== "yes") return false;
+      }
+    }
+    // 默认（其他情况）：自己在车上还是支持
+    return true;
+  }
 
   // === 投票前反思（让 AI 听完所有人发言后重新评估）===
   // 保留原 stance 的主导权，但 25% 概率被"后面的人说得有道理"反转
   const reconsider = aiReconsiderVote(player, team, game, stance);
-  if (reconsider !== null) return reconsider;
+  if (reconsider !== null) {
+    // 🆕 #49 记录反转：AI 发言时表态 X，投票时反转 → 下轮发言要解释
+    if (!game.voteFlips) game.voteFlips = {};
+    game.voteFlips[player.id] = {
+      round: game.round,
+      voteRound: game.voteRound,
+      stanceWasYes: stance === "yes",
+      finalVote: reconsider,
+      // 找出"是哪些后面的发言"让自己改变想法（取最近的反对/支持发言摘要）
+      reasonHint: extractFlipReason(player, game, stance)
+    };
+    return reconsider;
+  }
   if (stance === "yes") return true;
   if (stance === "no") return false;
   const isEvil = ROLE_DEFS[player.role].side === "evil";
@@ -943,6 +996,33 @@ function aiVote(player, team, game) {
     if (tt < 0) return Math.random() < 0.45;
     return Math.random() < 0.85;
   }
+}
+
+// 🆕 找出"是哪个后面的玩家说的什么话让自己改变想法"
+function extractFlipReason(player, game, originalStance) {
+  const myLabel = player.seatLabel;
+  let myIdx = -1;
+  for (let i = game.history.length - 1; i >= 0; i--) {
+    if (game.history[i].tag === myLabel && !game.history[i].typing) {
+      myIdx = i;
+      break;
+    }
+  }
+  if (myIdx < 0) return null;
+  const laterSpeeches = game.history.slice(myIdx + 1).filter(h => /^\d+号$/.test(h.tag) && h.text && !h.typing);
+  // 找出最关键的反向发言（用相同关键词检测）
+  for (const h of laterSpeeches) {
+    const t = h.text;
+    const supports = /我支持|赞成|跟一把|放心|信任|跟车|没问题|过吧|让车跑/.test(t);
+    const opposes = /反对|不放心|怀疑|有问题|不能上|这队不行|否决|流局/.test(t);
+    if (originalStance === "yes" && opposes || originalStance === "no" && supports) {
+      return {
+        speaker: h.tag,
+        snippet: t.slice(0, 50)
+      };
+    }
+  }
+  return null;
 }
 
 // 投票前反思：根据后续玩家发言改变想法（有限概率）
@@ -987,8 +1067,68 @@ function aiMission(player, game) {
   if (ROLE_DEFS[player.role].side !== "evil") return "success";
   const ew = game.missionResults.filter(m => !m.success).length;
   const gw = game.missionResults.filter(m => m.success).length;
-  if (ew >= 2 && Math.random() < 0.3) return "success";
-  if (gw === 0 && game.round === 0 && Math.random() < 0.2) return "success";
+
+  // 已经赢了，不需要继续 bom
+  if (ew >= 3) return "success";
+
+  // 蓝方 2 胜了，必须 bom 拼最后一波
+  if (gw >= 2) return "fail";
+
+  // 莫德雷德保守 bom：他的优势是"梅林看不到他"，bom 多了就暴露
+  // 让其他红方搭子先 bom，自己尽量保持低调
+  if (player.role === "Mordred") {
+    const otherEvilOnTeam = (game.proposedTeam || []).filter(id => id !== player.id && ROLE_DEFS[game.players[id].role].side === "evil" && game.players[id].role !== "Oberon" // 奥伯伦可能误伤，不能指望 ta
+    ).length;
+    if (otherEvilOnTeam >= 1) {
+      // 车上有其他可信红方搭子，让搭子 bom，自己装好人
+      if (Math.random() < 0.7) return "success";
+    }
+  }
+
+  // 第 1 轮策略：红方一般不 bom（信息少容易暴露）
+  // 但奥伯伦总是 bom（他不知道同伴是谁，能 bom 就 bom）
+  if (game.round === 0 && player.role !== "Oberon") {
+    // 70% 概率不 bom——尤其是当队里红方多的时候
+    const evilOnTeam = (game.proposedTeam || []).filter(id => ROLE_DEFS[game.players[id].role].side === "evil").length;
+    if (evilOnTeam >= 2) {
+      // 多个红方在车，让一个 bom 就够（或者都不 bom 装好人）
+      if (Math.random() < 0.65) return "success";
+    } else {
+      // 只有自己一个红方在车，第 1 轮 bom 太早会暴露
+      if (Math.random() < 0.4) return "success";
+    }
+  }
+
+  // 🆕 2 人车上有自己认识的红方搭子（不算奥伯伦）：协调 bom 节奏
+  // 只有 1 个红方应该 bom，避免双 bom 暴露搭子关系
+  const team = game.proposedTeam || [];
+  if (team.length === 2) {
+    const knownEvilOnTeam = team.filter(id => id !== player.id && player.knowledge?.sees?.some(s => s.id === id));
+    if (knownEvilOnTeam.length >= 1) {
+      // 车上有自己认识的搭子 → 谁 bom 由号码大的让小的（避免随机重复）
+      // 简单规则：让 id 较小的那个 bom，自己 id 大就 success
+      const minId = Math.min(player.id, ...knownEvilOnTeam);
+      if (player.id !== minId) {
+        // 自己不是 id 最小的 → 让搭子 bom，自己装好人
+        return "success";
+      }
+      // 自己是 id 最小的 → 自己 bom
+    }
+  }
+
+  // 双失败局（7-10 人第 4 轮）：需要 2 张失败票，单独 bom 没用
+  const isDoubleFailRound = game.setup.doubleFail && game.setup.doubleFail.includes(game.round);
+  if (isDoubleFailRound) {
+    const evilOnTeam = (game.proposedTeam || []).filter(id => ROLE_DEFS[game.players[id].role].side === "evil" && game.players[id].role !== "Oberon").length;
+    // 只有 1 个红方时（不算奥伯伦），bom 没意义反而暴露
+    if (evilOnTeam <= 1 && player.role !== "Oberon") {
+      // 但奥伯伦在车上时可能凑足 2 个，这种情况还是 bom
+      const oberonOnTeam = (game.proposedTeam || []).some(id => game.players[id].role === "Oberon");
+      if (!oberonOnTeam && Math.random() < 0.7) return "success";
+    }
+  }
+
+  // 默认 bom（红方主要任务）
   return "fail";
 }
 function aiAssassinate(_, game) {
@@ -1049,7 +1189,7 @@ ${game.assassinDiscussion && game.assassinDiscussion.length > 0 ? `\n【刚才�
       role: "user",
       content: prompt
     }], 50, {
-      model: "deepseek-chat",
+      model: "deepseek-v4-flash",
       temperature: 0.7
     });
     // 从结果里提取号牌
@@ -1093,24 +1233,91 @@ async function aiEvilDiscussion(speaker, game) {
     return `${p.seatLabel}：${sample}`;
   }).join("\n\n");
 
+  // 🆕 投票模式分析：每个好人对"含红方的车"的反应
+  // 梅林会反对含红方的车（但偶尔会装糊涂支持），普通好人会相对随机
+  const evilIds = new Set(evilPlayers.map(p => p.id));
+  const votePatternByGood = {};
+  goodPlayers.forEach(p => votePatternByGood[p.seatLabel] = {
+    opposedEvilTeams: 0,
+    supportedCleanTeams: 0,
+    supportedEvilTeams: 0,
+    total: 0
+  });
+  if (game.roundEvents) {
+    Object.values(game.roundEvents).forEach(roundList => {
+      roundList.forEach(ev => {
+        if (ev.type !== "approved" && ev.type !== "rejected") return;
+        if (!ev.team || !ev.votes) return;
+        const teamHasEvil = ev.team.some(id => evilIds.has(id));
+        goodPlayers.forEach(p => {
+          if (ev.votes[p.id] === undefined) return;
+          const supported = ev.votes[p.id] === true;
+          votePatternByGood[p.seatLabel].total += 1;
+          if (teamHasEvil) {
+            if (!supported) votePatternByGood[p.seatLabel].opposedEvilTeams += 1;else votePatternByGood[p.seatLabel].supportedEvilTeams += 1;
+          } else {
+            if (supported) votePatternByGood[p.seatLabel].supportedCleanTeams += 1;
+          }
+        });
+      });
+    });
+  }
+  const voteAnalysis = goodPlayers.map(p => {
+    const v = votePatternByGood[p.seatLabel];
+    if (v.total === 0) return null;
+    return `${p.seatLabel}：反对了 ${v.opposedEvilTeams} 个含红方的车 / 总共投了 ${v.total} 次`;
+  }).filter(Boolean).join("\n");
+
   // 已经发过言的红方 hint
   const prevEvilSpeech = (game.assassinDiscussion || []).map(d => `${game.players[d.speakerId].seatLabel}：${d.text}`).join("\n");
+
+  // 判断这是 speaker 的第几次发言（用于 prompt 区分语气）
+  const myPriorSpeechCount = (game.assassinDiscussion || []).filter(d => d.speakerId === speaker.id).length;
+  const isFollowUp = myPriorSpeechCount >= 1;
   const myRole = ROLE_DEFS[speaker.role].label;
   const isOberon = speaker.role === "Oberon";
+  const isAssassinSpeaker = speaker.role === "Assassin";
   const oberonHint = isOberon ? `\n💡 你是奥伯伦——本局之前你不知道任何同伴。但**刺杀环节系统已经公开揭示了所有红方身份**，所以现在你和其他红方一样都互相认识。可以正常参与讨论。\n` : "";
+  const assassinHint = isAssassinSpeaker ? `\n🗡 **你是刺客**——你也参与讨论分享判断，但你是最终拍板的人。这次发言只是分享你的看法，听完同伴意见后才做最终决定。\n` : "";
   const prompt = `你是阿瓦隆里的【${myRole}】，红方。蓝方完成了 3 次任务，现在进入终局刺杀讨论。
+你的座位号是【${speaker.seatLabel}】——**当谈到自己时用"我"，不要用自己的号牌**（"3号觉得"听起来像第三人称很出戏；"我觉得"才是真人语气）。
 ${isOberon ? `刺杀环节系统揭示了所有红方：${evilPlayers.map(p => p.seatLabel).join("、")}。你和其他红方一起公开讨论：刺客该刺谁。` : `你和红方同伴 ${evilPlayers.filter(p => p.id !== speaker.id).map(p => p.seatLabel).join("、")} 要公开讨论：刺客该刺谁。`}
-${oberonHint}
+${oberonHint}${assassinHint}
 蓝方候选：${goodPlayers.map(p => p.seatLabel).join("、")}
 
 【蓝方玩家本局发言摘录】
 ${goodSpeechSummary}
+
+【🔍 投票模式分析（重要！梅林会反对含红方的车）】
+${voteAnalysis || "（暂无投票数据）"}
 ${prevEvilSpeech ? `\n【红方同伴已经发过的意见】\n${prevEvilSpeech}\n` : ""}
-【任务】用 30-60 字说出你**觉得最像梅林的人**和理由。要求：
-- 直接点名号牌（"我觉得 3 号像梅林，因为..."）
-- 给一个具体理由（引用对方某次发言、某次投票，或某次精准反对）
+═══════ 🎯 梅林识别要点 ═══════
+**梅林的典型特征**：
+1. **发言精准但克制**——梅林知道谁是红方，所以推理"刚好正确"，但又不敢太张扬
+2. **反对含红方的车比例高**——梅林有视野，会经常反对（看上面投票分析）
+3. **对某些发言"勉强同意"或"轻微反对"**——可能是梅林在装糊涂
+4. **故意说错过 1-2 次**——但其他时候判断都很准
+5. **不太主动指认**——让别人先开口，自己后面"勉强附和"
+**容易被误认成梅林的角色**：
+- **派西维尔**：可能装有视野来吸引刺客火力，要分辨
+- **聪明的普通好人**：纯靠推理也可能很准
+**排除法**：
+- 完全没视野的纯推理玩家——发言质量一般，容易猜错
+- 整局都很激烈、张扬的玩家——通常不是梅林（梅林会克制）
+
+【任务】用 60-100 字深入分析后说出你**觉得最像梅林的人**和具体理由：
+- 直接点名号牌（"我觉得 3 号是梅林"）
+- **必须引用 1-2 个具体场景**——不能只说"反对了一些含红方的车"这种空话，要说**具体哪一轮**、**哪一队**、**结果是什么**：
+   ✅ 好例子："3 号在第 2 轮反对了 5 号 + 7 号那队，那队后来失败出 2 张失败票——他这反对很准，像有视野"
+   ❌ 烂例子："3 号反对了几次含红方的车"——这话太空，没说哪一轮哪一队
+- **比较至少 1 个其他候选人**：说为什么 3 号比 X 号更像梅林。比如"4 号也反对过失败队，但他第 1 轮就反对了 1 号 + 2 号那队（那队结果是成功的），说明 4 号判断没那么准，所以 3 号更像梅林"
 - 像桌游真实讨论那样口语化，不要"作为...""综上"这种作文腔
-- ${prevEvilSpeech ? "如果同意同伴的判断可以附议，但要补充新理由；如果不同意可以反驳" : "你是第一个发言的红方"}
+${isFollowUp ? `- 🔄 **这是你的追加发言**（你之前已经说过一次，现在听完其他同伴讨论后再补充）：
+  - 不要重复你之前说的内容
+  - **要么反驳同伴**："5 号同伴觉得 3 号像，但我不同意，因为..."
+  - **要么补充新角度**："听了大家说的，我想到一个新观察：4 号其实也很可疑..."
+  - **要么表态站队**："我同意 5 号说的 X 号是梅林，加上我刚发现的..."
+  - 50-80 字即可，比第一次发言简短一点` : prevEvilSpeech ? "- 如果同意同伴可以附议，但要**补充新角度**；如果不同意要**具体反驳**他们的论据" : "- 你是第一个发言的红方"}
 
 只输出你的发言正文，不要任何前缀。`;
   try {
@@ -1118,7 +1325,7 @@ ${prevEvilSpeech ? `\n【红方同伴已经发过的意见】\n${prevEvilSpeech}
       role: "user",
       content: prompt
     }], 150, {
-      model: "deepseek-chat",
+      model: "deepseek-v4-flash",
       temperature: 0.85
     });
     return result.trim();
@@ -1156,13 +1363,21 @@ const PROVIDERS = {
     rechargeUrl: "https://platform.deepseek.com/top_up",
     rechargeNote: "需要付费充值。¥10 起，按用量计费很便宜，能玩几十局",
     models: [{
+      id: "deepseek-v4-flash",
+      name: "⚡ V4 Flash",
+      desc: "默认推荐 · 快 · 便宜"
+    }, {
+      id: "deepseek-v4-pro",
+      name: "🧠 V4 Pro",
+      desc: "更聪明 · 较慢较贵"
+    }, {
       id: "deepseek-chat",
       name: "💬 V3.2 Chat",
-      desc: "默认推荐 · 快 · 便宜"
+      desc: "兼容旧版"
     }, {
       id: "deepseek-reasoner",
       name: "🧠 R1 Reasoner",
-      desc: "更聪明 · 较慢较贵 · 会先思考再回答"
+      desc: "兼容旧版"
     }],
     free: false
   },
@@ -1217,7 +1432,9 @@ const QF_KEY_STORAGE = "avalon_qf_key"; // 千帆 key
 
 const getProvider = () => {
   try {
-    return localStorage.getItem(PROVIDER_STORAGE) || "deepseek";
+    const p = localStorage.getItem(PROVIDER_STORAGE) || "deepseek";
+    // 🆕 校验：如果 localStorage 里的值不在 PROVIDERS 里（比如旧版本残留），回退到 deepseek
+    return PROVIDERS[p] ? p : "deepseek";
   } catch {
     return "deepseek";
   }
@@ -1250,9 +1467,18 @@ const getDSKey = () => getKeyFor(getProvider());
 const setDSKey = k => setKeyFor(getProvider(), k);
 const getDSModel = () => {
   try {
-    return localStorage.getItem(DS_MODEL_STORAGE) || PROVIDERS[getProvider()].models[0].id;
+    const stored = localStorage.getItem(DS_MODEL_STORAGE);
+    const provider = getProvider();
+    const cfg = PROVIDERS[provider];
+    if (!cfg) return "deepseek-v4-flash"; // 兜底
+    // 🔒 校验：localStorage 里存的模型是否在当前 provider 的支持列表里
+    if (stored && cfg.models.find(m => m.id === stored)) {
+      return stored;
+    }
+    // 不在列表 → 用 provider 第一个默认模型
+    return cfg.models[0].id;
   } catch {
-    return PROVIDERS[getProvider()].models[0].id;
+    return "deepseek-v4-flash";
   }
 };
 const setDSModel = m => {
@@ -1260,64 +1486,91 @@ const setDSModel = m => {
     localStorage.setItem(DS_MODEL_STORAGE, m);
   } catch {}
 };
+
+// 🆕 #76 简单的请求并发控制——避免短时间内大量请求触发 rate limit
+// 同一时刻最多 N 个并发请求，超过就排队
+const __apiQueue = {
+  active: 0,
+  max: 3,
+  queue: []
+};
+async function __apiAcquire() {
+  if (__apiQueue.active < __apiQueue.max) {
+    __apiQueue.active += 1;
+    return;
+  }
+  // 排队
+  await new Promise(resolve => __apiQueue.queue.push(resolve));
+  __apiQueue.active += 1;
+}
+function __apiRelease() {
+  __apiQueue.active -= 1;
+  const next = __apiQueue.queue.shift();
+  if (next) next();
+}
 async function callDeepSeek(messages, maxTokens = 400, opts = {}) {
-  const provider = getProvider();
-  const cfg = PROVIDERS[provider];
-  const key = getKeyFor(provider);
-  if (!key) throw new Error("NO_KEY");
-  // 如果调用方指定了 model 但当前 provider 不支持，回退到当前 provider 默认模型
-  let model = opts.model || getDSModel();
-  if (opts.model && !cfg.models.find(m => m.id === opts.model)) {
-    // 调用方要求"chat 模型"——找当前 provider 第一个 model 当默认
-    model = cfg.models[0].id;
+  await __apiAcquire();
+  try {
+    const provider = getProvider();
+    const cfg = PROVIDERS[provider];
+    const key = getKeyFor(provider);
+    if (!key) throw new Error("NO_KEY");
+    // 如果调用方指定了 model 但当前 provider 不支持，回退到当前 provider 默认模型
+    let model = opts.model || getDSModel();
+    if (opts.model && !cfg.models.find(m => m.id === opts.model)) {
+      // 调用方要求"chat 模型"——找当前 provider 第一个 model 当默认
+      model = cfg.models[0].id;
+    }
+    // 不同 provider 的最优参数（调教过的）
+    const PROVIDER_PARAMS = {
+      deepseek: {
+        temperature: 0.95,
+        top_p: 0.95,
+        frequency_penalty: 0.3,
+        presence_penalty: 0.3
+      },
+      qianfan: {
+        temperature: 0.85,
+        top_p: 0.85,
+        frequency_penalty: 0.5,
+        presence_penalty: 0.4
+      },
+      // 百度系容易重复，加大惩罚
+      kimi: {
+        temperature: 0.9,
+        top_p: 0.9,
+        frequency_penalty: 0.4,
+        presence_penalty: 0.4
+      } // Kimi 长篇大论倾向，调低
+    };
+    const baseParams = PROVIDER_PARAMS[provider] || PROVIDER_PARAMS.deepseek;
+    const body = {
+      model,
+      messages,
+      max_tokens: maxTokens,
+      temperature: opts.temperature !== undefined ? opts.temperature : baseParams.temperature,
+      top_p: opts.top_p !== undefined ? opts.top_p : baseParams.top_p,
+      frequency_penalty: baseParams.frequency_penalty,
+      presence_penalty: baseParams.presence_penalty
+    };
+    const resp = await fetch(cfg.url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${key}`
+      },
+      body: JSON.stringify(body)
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`${cfg.label} ${resp.status}: ${errText.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    const text = data?.choices?.[0]?.message?.content || "";
+    return text.trim();
+  } finally {
+    __apiRelease();
   }
-  // 不同 provider 的最优参数（调教过的）
-  const PROVIDER_PARAMS = {
-    deepseek: {
-      temperature: 0.95,
-      top_p: 0.95,
-      frequency_penalty: 0.3,
-      presence_penalty: 0.3
-    },
-    qianfan: {
-      temperature: 0.85,
-      top_p: 0.85,
-      frequency_penalty: 0.5,
-      presence_penalty: 0.4
-    },
-    // 百度系容易重复，加大惩罚
-    kimi: {
-      temperature: 0.9,
-      top_p: 0.9,
-      frequency_penalty: 0.4,
-      presence_penalty: 0.4
-    } // Kimi 长篇大论倾向，调低
-  };
-  const baseParams = PROVIDER_PARAMS[provider] || PROVIDER_PARAMS.deepseek;
-  const body = {
-    model,
-    messages,
-    max_tokens: maxTokens,
-    temperature: opts.temperature !== undefined ? opts.temperature : baseParams.temperature,
-    top_p: opts.top_p !== undefined ? opts.top_p : baseParams.top_p,
-    frequency_penalty: baseParams.frequency_penalty,
-    presence_penalty: baseParams.presence_penalty
-  };
-  const resp = await fetch(cfg.url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${key}`
-    },
-    body: JSON.stringify(body)
-  });
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`${cfg.label} ${resp.status}: ${errText.slice(0, 200)}`);
-  }
-  const data = await resp.json();
-  const text = data?.choices?.[0]?.message?.content || "";
-  return text.trim();
 }
 async function testDSKey(key) {
   try {
@@ -1332,9 +1585,25 @@ async function testDSKey(key) {
       ok: true
     };
   } catch (e) {
+    // 友好化错误信息，帮助用户判断到底是什么问题
+    let msg = e.message || String(e);
+    if (msg.includes("Failed to fetch") || msg.toLowerCase().includes("network")) {
+      msg = `网络无法连接到 ${PROVIDERS[getProvider()]?.label || ""} API 服务器。可能原因：
+• 你的网络/VPN/防火墙拦截了对 ${PROVIDERS[getProvider()]?.url?.split("/")[2] || "API"} 的访问
+• ${PROVIDERS[getProvider()]?.label || ""} 服务器临时抽风（国内访问偶尔不稳）
+• 浏览器扩展（广告拦截、隐私保护）拦了请求
+请：换网络重试 / 关掉扩展 / 切换到其他 provider（百度千帆国内更稳）`;
+    } else if (msg.includes("401") || msg.includes("403")) {
+      msg = `API Key 无效或权限不足。请确认：
+• Key 是从 ${PROVIDERS[getProvider()]?.label || ""} 平台直接复制的（开头通常是 sk-）
+• Key 没有过期或被吊销
+• 账户余额充足`;
+    } else if (msg.includes("429")) {
+      msg = `调用次数超限或欠费。请去 ${PROVIDERS[getProvider()]?.label || ""} 平台充值或检查限流`;
+    }
     return {
       ok: false,
-      err: e.message
+      err: msg
     };
   }
 }
@@ -1346,7 +1615,7 @@ function buildAIContext(speaker, game) {
   const humanPlayer = game.players.find(p => p.isHuman);
   const others = game.players.map(p => {
     let mark = "";
-    if (p.id === speaker.id) mark = "(我)";else if (p.isHuman) mark = "(真人玩家)";
+    if (p.id === speaker.id) mark = "(我)";
     return `${mark}${p.seatLabel}`;
   }).join("、");
   let knownInfo;
@@ -1354,6 +1623,32 @@ function buildAIContext(speaker, game) {
     if (speaker.role === "Oberon") knownInfo = "我是奥伯伦，看不到任何同伴，得装好人混过去。";else knownInfo = "我没有特殊视野，只能靠观察推理。";
   } else {
     knownInfo = "我看到的：" + speaker.knowledge.sees.map(s => `${game.players[s.id].seatLabel}=${s.label}`).join("，");
+  }
+
+  // 🆕 #34 红方互相试探：如果场上有奥伯伦 + 我是其他红方（不是奥伯伦本身、且不是好人）
+  // 我虽然看不到奥伯伦是谁，但我知道场上有这个角色——给我提示如何识别
+  const hasOberonInGame = game.players.some(p => p.role === "Oberon");
+  const speakerIsEvilButNotOberon = ROLE_DEFS[speaker.role].side === "evil" && speaker.role !== "Oberon";
+  if (hasOberonInGame && speakerIsEvilButNotOberon) {
+    knownInfo += `\n\n🤝 **关于奥伯伦的认知（红方共识）**：本局红方阵营里有【奥伯伦】角色——他不认识你（也不认识其他任何红方），你也看不到他。但**他客观上是你的同伴**，他会 bom 任务。
+   • **识别奥伯伦的信号**：某个看似"好人"的玩家有这些特征中的多个 = 大概率奥伯伦
+     - 上了车之后 bom 了（不在你认识的搭子里）
+     - 反对了一个明显干净的好人（队伍里全是蓝方但他还反对）
+     - 发言风格不像普通好人推理，更像"在装"
+     - 队长选他时他主动支持上车
+   • **如何配合**（在不暴露自己的前提下）：
+     - 如果你怀疑某号是奥伯伦，**别戳穿**他——让他继续装好人
+     - 如果你和疑似奥伯伦同时在车上，你**可以让他 bom 你装好人**（避免双 bom 暴露你）
+     - **绝不能公开说"X 号是奥伯伦"或"奥伯伦在场"**——那是把奥伯伦的烟雾弹给烧了`;
+  }
+
+  // 🆕 #34 奥伯伦自己：如何让红方搭子认出你（不暴露给好人）
+  if (speaker.role === "Oberon") {
+    knownInfo += `\n\n🎭 **奥伯伦的发信号策略（让搭子认出你而不暴露给好人）**：
+   • 你发言时用**普通好人逻辑**，但偶尔故意对一个"看起来干净"的人**轻微反对**——这是给搭子的信号
+   • 但**绝不能太明显**！比如不要直接说"我反对 X 号"，而是"X 号那波我有点不放心"——好人觉得是你在凭直觉，搭子能看出你在搞事
+   • 如果你 bom 了车，搭子下轮会推断"那车上有奥伯伦"——他会潜在保护你（不带你上车避免暴露）
+   • 你**永远不要直接表态"我和某号一伙"**——搭子的认知是间接的`;
   }
   // 本局规则提示（双失败局）
   const doubleRule = game.setup.doubleFail && game.setup.doubleFail.length > 0 ? `\n📋 本局规则提示：第 ${game.setup.doubleFail.map(i => i + 1).join("、")} 轮是【双失败任务】——必须 2 张失败票才算失败！这意味着：(1) 这轮红方上 1 个无法直接 bom 掉任务；(2) 如果该轮出了 1 张失败票但任务成功，说明队里有红方但只有 1 个；(3) 如果该轮失败了，说明队里至少有 2 个红方。` : "";
@@ -1383,31 +1678,230 @@ function buildAIContext(speaker, game) {
 
     // === 硬推理结论：根据任务结果直接算出已确定的红方 ===
     const hardConclusions = [];
+
+    // 收集所有出现在成功任务里的人——这些人是"相对干净"的
+    const cleanTracker = {}; // playerId -> {success: count, total: count}
+    game.missionResults.forEach(m => {
+      m.team.forEach(id => {
+        if (!cleanTracker[id]) cleanTracker[id] = {
+          success: 0,
+          total: 0
+        };
+        cleanTracker[id].total += 1;
+        if (m.success) cleanTracker[id].success += 1;
+      });
+    });
     game.missionResults.forEach((m, i) => {
       const teamLabels = m.team.map(id => game.players[id].seatLabel);
       const isDoubleFailRound = game.setup.doubleFail && game.setup.doubleFail.includes(i);
 
       // 双失败局：1 失败票任务还是成功 —— 这种情况是关键信息！
       if (isDoubleFailRound && m.success && m.fails === 1) {
-        hardConclusions.push(`🟣 第${i + 1}轮（双失败特殊局）：队伍【${teamLabels.join("、")}】出了 1 张失败票但任务成功——**说明队里有红方但只有 1 个**。这红方是谁需要结合后续推理。`);
+        hardConclusions.push(`🟣 第${i + 1}轮（双失败特殊局）：队伍【${teamLabels.join("、")}】出了 1 张失败票但任务成功——**说明队里至少有 1 个红方**。`);
       }
       // 失败票 = 队员人数：整队全员暴露
       else if (!m.success && m.fails === m.team.length) {
         hardConclusions.push(`🔴 第${i + 1}轮失败票数(${m.fails})=队伍人数(${m.team.length})：队伍【${teamLabels.join("、")}】**全员都是红方**（这是确定的，不需要推理）`);
       }
-      // 失败票 = 队员人数 - 1：除了一人都是红方（一般用不上但留着）
+      // 失败票 = 队员人数 - 1：除了一人都是红方
       else if (!m.success && m.fails === m.team.length - 1 && m.team.length > 2) {
         hardConclusions.push(`🟡 第${i + 1}轮失败票数(${m.fails})=队伍人数-1：队伍【${teamLabels.join("、")}】里**只有 1 人是蓝方**，其余 ${m.fails} 人都是红方`);
       }
+      // 🆕 2 人队 + 1 失败票：核心博弈点
+      else if (!m.success && m.fails === 1 && m.team.length === 2) {
+        hardConclusions.push(`🔵 第${i + 1}轮关键 2 人队【${teamLabels.join("、")}】出了 1 张失败票——**至少 1 个红方**（也可能 2 个都红，因为红方有时会故意投成功伪装）。
+  ⚠️ **关键博弈**：这 2 人里的**好人 100% 知道对方是红方**（因为自己投的成功，失败票必是对方）；这 2 人里的**红方为了自保也必须装好人 + 反指对方**。
+  ⚠️ 所以正确做法：**这 2 人必须互相指认是红方**（一个真指、一个装着指）。如果他俩互相维护、说"对方应该是好人"——**至少有 1 个在演戏，大概率两个都是红方**！这是阿瓦隆识破红方搭子的关键点。`);
+      }
+      // 🆕 3 人队 2 失败：至少 2 红
+      else if (!m.success && m.fails === 2 && m.team.length === 3) {
+        hardConclusions.push(`🟠 第${i + 1}轮 3 人队【${teamLabels.join("、")}】出了 2 张失败票——**至少 2 个红方**（也可能 3 个都红）。这队里**最多只有 1 个蓝方**，要重点找出谁是那唯一的蓝方。`);
+        // 🆕 自己视角：如果自己在这队 + 自己是好人 → 100% 知道另外 2 个都是红方
+        if (m.team.includes(speaker.id) && ROLE_DEFS[speaker.role].side === "good") {
+          const otherTwo = m.team.filter(id => id !== speaker.id).map(id => game.players[id].seatLabel);
+          hardConclusions.push(`🔥 **你自己视角的硬结论**：你在第${i + 1}轮那个 3 人车上！你是好人（投了成功票），所以失败票全是另外 2 人投的——**【${otherTwo.join("、")}】两个都是红方**（100% 确定，不是"至少一个"，是两个都是）！发言时要**斩钉截铁地指认这两个人都是红方**，不能含糊说"他俩里有一个"——是两个都是！`);
+        }
+      }
+      // 🆕 N 人队 N-1 失败 + 自己在队里 + 自己好人 → 其他全红
+      else if (!m.success && m.fails === m.team.length - 1 && m.team.length >= 2 && m.team.includes(speaker.id) && ROLE_DEFS[speaker.role].side === "good") {
+        const others = m.team.filter(id => id !== speaker.id).map(id => game.players[id].seatLabel);
+        hardConclusions.push(`🔥 **你自己视角的硬结论**：你在第${i + 1}轮那个失败队上，失败票数=队伍人数-1——你是好人（投的成功），所以**【${others.join("、")}】全部都是红方**（100% 确定）！发言时要直接指认所有这些人都是红方。`);
+      }
+      // 🆕 4 人队 2 失败（非双失败局）：至少 2 红
+      else if (!m.success && m.fails === 2 && m.team.length === 4 && !isDoubleFailRound) {
+        hardConclusions.push(`🟠 第${i + 1}轮 4 人队【${teamLabels.join("、")}】出了 2 张失败票——**至少 2 个红方**（也可能 3-4 个都红）。`);
+      }
       // 双失败局失败：至少 2 个红方
       else if (!m.success && isDoubleFailRound && m.fails >= 2) {
-        hardConclusions.push(`🟠 第${i + 1}轮（双失败局）：队伍【${teamLabels.join("、")}】里**至少有 ${m.fails} 个红方**（这局需要 2 张失败票才算失败，所以红方至少 2 人潜伏其中）`);
+        hardConclusions.push(`🟠 第${i + 1}轮（双失败局）：队伍【${teamLabels.join("、")}】里**至少有 ${m.fails} 个红方**（这局需要 2 张失败票才算失败，所以红方至少 ${m.fails} 人潜伏其中）`);
       }
       // 普通失败：至少有 X 个红方在队里
       else if (!m.success && m.fails >= 1) {
         hardConclusions.push(`🟠 第${i + 1}轮：队伍【${teamLabels.join("、")}】里至少有 ${m.fails} 个红方（具体是谁需要结合后续推理）`);
       }
     });
+
+    // 🆕 干净度推理：上过 ≥2 次成功任务的人是相对干净的
+    const cleanPlayers = Object.entries(cleanTracker).filter(([id, stat]) => stat.success >= 2 && stat.total === stat.success).map(([id]) => game.players[id].seatLabel);
+    if (cleanPlayers.length > 0) {
+      hardConclusions.push(`✅ **相对干净的玩家**：${cleanPlayers.join("、")}——上过 ≥2 次成功任务且没失败过。这些人**大概率是蓝方**（红方上车通常会找机会 bom，连续不 bom 概率小）。可以**抢着把他们带上车**，或者**把他们当队长信任**。`);
+    }
+
+    // 🆕 #46 队长带过 + 任务成功 = 队长和被带的人之间有正向信任
+    // 但这是"软信号"——不是硬结论，要小心使用
+    const leaderTrustHints = [];
+    game.missionResults.forEach((m, i) => {
+      if (!m.success) return; // 只看成功的车
+      const leaderId = m.leaderId;
+      if (leaderId === undefined) return;
+      const leader = game.players[leaderId];
+      const otherIds = m.team.filter(id => id !== leaderId);
+      if (otherIds.length === 0) return;
+      const otherLabels = otherIds.map(id => game.players[id].seatLabel).join("、");
+      leaderTrustHints.push(`第${i + 1}轮 ${leader.seatLabel} 当队长带【${otherLabels}】成功——${leader.seatLabel} 信任这些人`);
+    });
+    if (leaderTrustHints.length > 0) {
+      hardConclusions.push(`💡 **队长信任轨迹（软信号）**：\n  ${leaderTrustHints.join("\n  ")}\n  ⚠️ 这只是参考——红方队长也可能"带搭子上车不 bom"做信誉。但**蓝方队长大概率信任他带的人**，可以反向推理蓝方阵营。`);
+    }
+
+    // 🆕 #82 队长重复使用某号（软信号：可能在保护同伴）
+    // 比如某队长第 1 轮带 X 号、第 2 轮还带 X 号——可能在保护 X 号（同伴）
+    const leaderRepeatPattern = {};
+    game.missionResults.forEach((m, i) => {
+      const leaderId = m.leaderId;
+      if (leaderId === undefined) return;
+      m.team.forEach(memberId => {
+        if (memberId === leaderId) return;
+        const key = `${leaderId}->${memberId}`;
+        if (!leaderRepeatPattern[key]) leaderRepeatPattern[key] = [];
+        leaderRepeatPattern[key].push({
+          round: i,
+          success: m.success
+        });
+      });
+    });
+    const repeatHints = [];
+    Object.entries(leaderRepeatPattern).forEach(([key, history]) => {
+      if (history.length >= 2) {
+        const [leaderId, memberId] = key.split("->").map(Number);
+        const lname = game.players[leaderId].seatLabel;
+        const mname = game.players[memberId].seatLabel;
+        const successCount = history.filter(h => h.success).length;
+        const failCount = history.length - successCount;
+        if (failCount >= 1) {
+          repeatHints.push(`${lname} 多次（${history.length} 次）当队长都带 ${mname}，但其中 ${failCount} 次失败——${lname} 可能在保护 ${mname}（搭子嫌疑）`);
+        }
+      }
+    });
+    if (repeatHints.length > 0) {
+      hardConclusions.push(`🔍 **队长重复使用模式（软信号）**：\n  ${repeatHints.join("\n  ")}\n  ⚠️ 不是 100% 必然——也可能队长真的就是信任 TA。但**多次带同一人去失败队 = 大概率搭子关系**。`);
+    }
+
+    // 🆕 #67 投票分布揭示阵营：少数派反对者大概率同伴
+    // 如果一队最终成功通过了但只有 2-3 人反对，这 2-3 人有可能是红方搭子
+    if (game.roundEvents) {
+      const minorityOpposers = [];
+      Object.values(game.roundEvents).forEach(roundList => {
+        roundList.forEach(ev => {
+          if (ev.type !== "approved" && ev.type !== "rejected") return;
+          if (!ev.votes) return;
+          const opposers = Object.entries(ev.votes).filter(([_, v]) => v === false).map(([id]) => parseInt(id));
+          const totalVoters = Object.keys(ev.votes).length;
+          // 少数反对（2-3 人反对，且 < 一半）
+          if (opposers.length >= 2 && opposers.length <= 3 && opposers.length < totalVoters / 2) {
+            const labels = opposers.map(id => game.players[id].seatLabel).join("、");
+            minorityOpposers.push(`【${labels}】一起反对了某队`);
+          }
+        });
+      });
+      if (minorityOpposers.length >= 2) {
+        // 只有反复出现"几个人一起反对"才有意义
+        hardConclusions.push(`🔍 **少数派反对模式（软信号）**：${minorityOpposers.slice(0, 3).join("；")}——反复一起反对的几人**有较大可能是同伴**（红方都不希望蓝方车跑成功）。⚠️ 但这只是参考，不是 100%——蓝方好人也可能因为同样的怀疑投反对。`);
+      }
+    }
+
+    // 🆕 #68 失败队 vs 成功队的反对一致性
+    if (game.roundEvents) {
+      const opposeFailRate = {}; // 反对失败队的次数 / 失败队总数
+      const supportFailRate = {}; // 支持失败队的次数 / 失败队总数
+      const successApprovedTeams = []; // 成功的车
+      const failApprovedTeams = []; // 失败的车
+      game.missionResults.forEach((m, i) => {
+        // 找到这次任务的 approved 投票事件
+        const roundEvts = game.roundEvents[i] || [];
+        const approveEvt = roundEvts.find(ev => ev.type === "approved" && ev.votes);
+        if (!approveEvt) return;
+        const data = {
+          votes: approveEvt.votes,
+          success: m.success
+        };
+        if (m.success) successApprovedTeams.push(data);else failApprovedTeams.push(data);
+      });
+      if (failApprovedTeams.length >= 2) {
+        // 谁反对了所有/大部分失败队？
+        const playerStats = {};
+        game.players.forEach(p => playerStats[p.id] = {
+          opposedFailed: 0,
+          supportedFailed: 0
+        });
+        failApprovedTeams.forEach(t => {
+          Object.entries(t.votes).forEach(([pid, v]) => {
+            if (v === false) playerStats[pid].opposedFailed += 1;else playerStats[pid].supportedFailed += 1;
+          });
+        });
+        const sharpEyes = Object.entries(playerStats).filter(([_, s]) => s.opposedFailed >= failApprovedTeams.length - 0).map(([id]) => game.players[id].seatLabel);
+        const blindEyes = Object.entries(playerStats).filter(([_, s]) => s.supportedFailed >= failApprovedTeams.length).map(([id]) => game.players[id].seatLabel);
+        if (sharpEyes.length > 0) {
+          hardConclusions.push(`🎯 **反对所有失败队的玩家（高视野信号）**：${sharpEyes.join("、")}——反对了全部 ${failApprovedTeams.length} 个失败队。**大概率有视野（梅林/派西）或推理特别准**——但也是刺客的盯人目标。`);
+        }
+        if (blindEyes.length > 0) {
+          hardConclusions.push(`⚠️ **支持所有失败队的玩家（视野错乱信号）**：${blindEyes.join("、")}——支持了全部 ${failApprovedTeams.length} 个失败队。**大概率是红方在帮搭子推车** 或 **完全没视野的好人**。`);
+        }
+      }
+    }
+
+    // 🆕 交叉对比：同一人出现在不同结果的车里——可疑度推理
+    const suspectScore = {};
+    Object.entries(cleanTracker).forEach(([id, stat]) => {
+      const failCount = stat.total - stat.success;
+      if (failCount > 0) {
+        suspectScore[id] = failCount * 2 - stat.success;
+      }
+    });
+    const topSuspects = Object.entries(suspectScore).filter(([_, score]) => score > 0).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id]) => game.players[id].seatLabel);
+    if (topSuspects.length > 0) {
+      hardConclusions.push(`⚠️ **可疑度高的玩家**（失败队出现次数多）：${topSuspects.join("、")}——重点怀疑这些人。**对比成功队和失败队的差异**就能找出红方。`);
+    }
+
+    // 🆕 双队对比推理：同一人在两次任务都上车，但一成功一失败 → 找出关键变量
+    // 例：第 1 轮【A、B】失败，第 2 轮【A、C】成功 → B 大概率红，C 大概率蓝
+    const successfulMissions = game.missionResults.filter(m => m.success);
+    const failedMissions = game.missionResults.filter(m => !m.success);
+    const compareDiffs = [];
+    failedMissions.forEach(failM => {
+      successfulMissions.forEach(succM => {
+        const failTeam = new Set(failM.team);
+        const succTeam = new Set(succM.team);
+        const sharedIds = [...failTeam].filter(id => succTeam.has(id));
+        // 至少有 1 人共享 → 可以做对比推理
+        if (sharedIds.length >= 1) {
+          const onlyInFail = [...failTeam].filter(id => !succTeam.has(id));
+          const onlyInSucc = [...succTeam].filter(id => !failTeam.has(id));
+          if (onlyInFail.length > 0 && onlyInSucc.length > 0) {
+            const sharedLabels = sharedIds.map(id => game.players[id].seatLabel).join("、");
+            const failOnlyLabels = onlyInFail.map(id => game.players[id].seatLabel).join("、");
+            const succOnlyLabels = onlyInSucc.map(id => game.players[id].seatLabel).join("、");
+            const failR = game.missionResults.indexOf(failM) + 1;
+            const succR = game.missionResults.indexOf(succM) + 1;
+            compareDiffs.push(`🔍 **第${succR}轮 vs 第${failR}轮对比**：共同人【${sharedLabels}】参与了这两轮——**第${succR}轮成功**（仅 ${succR} 队多出【${succOnlyLabels}】），**第${failR}轮失败**（仅 ${failR} 队多出【${failOnlyLabels}】）。**结论**：【${succOnlyLabels}】大概率是蓝方，【${failOnlyLabels}】大概率有红方在内。`);
+          }
+        }
+      });
+    });
+    // 最多列出 2 条最有用的对比
+    if (compareDiffs.length > 0) {
+      compareDiffs.slice(0, 2).forEach(line => hardConclusions.push(line));
+    }
     if (hardConclusions.length > 0) {
       missionsInfo += `\n\n══════ 🚨 硬推理结论（基于失败票数学规律，不是猜测）══════\n${hardConclusions.join("\n")}\n══════════════════════════════════════════════════\n⚠️ 这些是**铁定**的事实，发言时要用上！比如"5 号 6 号第 1 轮 2 人队就出了 2 张失败票，他俩都是红的，没什么好说的，必须刺。"`;
     }
@@ -1464,6 +1958,96 @@ function buildAIContext(speaker, game) {
   }
   missionsInfo += leaderRule;
 
+  // === 🆕 局势分析（让 AI 知道现在的紧迫程度）===
+  const blueWins = (game.missionResults || []).filter(m => m.success).length;
+  const redWins = (game.missionResults || []).filter(m => !m.success).length;
+  const isMyTeamBlue = ROLE_DEFS[speaker.role].side === "good";
+  const myWins = isMyTeamBlue ? blueWins : redWins;
+  const oppWins = isMyTeamBlue ? redWins : blueWins;
+  let situationAlert = `\n\n【🎯 当前比分（关键决策依据）】\n蓝方 ${blueWins} 胜 vs 红方 ${redWins} 胜（5 轮里已完成 ${blueWins + redWins} 轮）`;
+  if (oppWins === 2) {
+    situationAlert += `\n🚨 **危机：${isMyTeamBlue ? "红方" : "蓝方"}还差 1 胜就赢了！** 这一轮你必须**全力以赴**——
+- ${isMyTeamBlue ? "蓝方：你要把所有可疑红方排除在车外，宁可流局也不能让红方赢。质疑要狠，立场要硬，不要客气" : "红方：再 bom 一次就赢！谁能上车谁就要 bom，发言上极力支持含同伴的车"}`;
+  } else if (myWins === 2) {
+    situationAlert += `\n💪 **优势：你方再赢 1 胜就胜利！** ${isMyTeamBlue ? `但是注意——蓝方就算赢了任务，最后还要扛过刺杀环节。这一轮**所有蓝方都要更收敛**：
+- **梅林尤其危险**：刺客这时候最盯梅林，你（如果是梅林）发言要**比之前更模糊**，不要因为"快赢了"就放松
+- **派西/普通好人**：也不要张扬分析——刺客在筛选所有"看起来精准的人"
+- **核心原则**：蓝方优势越大 = 梅林越要装糊涂 = 整个蓝方阵营都要收敛分析` : "对方蓝方会拼命堵你，要更隐蔽地推进"}`;
+  } else if (blueWins === 1 && redWins === 1) {
+    situationAlert += `\n⚖️ 比分 1:1 拉锯——这是关键的转折轮，谁错失这局后面就难翻身`;
+  } else if (game.voteRound >= 3) {
+    situationAlert += `\n🚨 **流局警告：已连续流局 ${game.voteRound} 次，再 ${5 - game.voteRound} 次红方直接胜利！** ${isMyTeamBlue ? "蓝方要倾向让车跑起来，不要僵持——红方就是要拖到流局 5 次" : "红方：可以更激进地反对，僵持下去你就赢了"}`;
+    // 🆕 #48 找出"反复投反对"的玩家——红方典型
+    if (game.roundEvents) {
+      const oppositionByPlayer = {};
+      game.players.forEach(p => oppositionByPlayer[p.id] = 0);
+      Object.values(game.roundEvents).forEach(roundList => {
+        roundList.forEach(ev => {
+          if ((ev.type === "approved" || ev.type === "rejected") && ev.votes) {
+            Object.entries(ev.votes).forEach(([pid, v]) => {
+              if (v === false) oppositionByPlayer[pid] += 1;
+            });
+          }
+        });
+      });
+      const heavyOpposers = Object.entries(oppositionByPlayer).filter(([_, count]) => count >= 3).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id, count]) => `${game.players[id].seatLabel}（${count} 次反对）`);
+      if (heavyOpposers.length > 0) {
+        situationAlert += `\n⚠️ **反复投反对的玩家**：${heavyOpposers.join("、")}——这些人在拖流局，**红方嫌疑大**。蓝方要警惕他们，红方可能在配合拖时间。`;
+      }
+    }
+  } else if (game.round >= 3) {
+    situationAlert += `\n⏰ **第 ${game.round + 1} 轮（接近决胜局）**：剩下的轮数不多了，每一票都关键`;
+  }
+  // 🆕 #32 第 5 轮特殊处理（最后一局）
+  if (game.round === 4) {
+    situationAlert += `\n\n🔥 **第 5 轮是终局！这是最后一轮任务，没有下一轮了**：
+- ${isMyTeamBlue ? `**蓝方所有人必须死命想上车**！这是最后机会——不上车就赢不了。
+  • 如果你是好人：用一切理由争取上车（"我没上过失败队""我推理一直挺准"等）
+  • **不要再"低调观望"**——再低调下一轮没有了，你就输了
+  • 如果你是梅林：可以稍微张扬一点了，因为就算被刺客盯上，你也得先帮蓝方赢这局任务再说` : `**红方所有人必须死命想上车 bom**！再 bom 一次蓝方还差 1 任务就到刺客手里了。
+  • 已暴露的红方除外（带不上去）
+  • 没暴露的红方装好人争上车，上去就 bom——这是最后翻盘机会`}`;
+  }
+
+  // 🆕 #86 高赞同票 + 任务失败 → 全场反思被骗
+  // 检查最近一次失败的任务，如果当时通过率很高（≥70%），提醒蓝方反思被骗
+  if (game.missionResults && game.missionResults.length > 0) {
+    const lastFailed = [...game.missionResults].reverse().find(m => !m.success);
+    if (lastFailed && game.roundEvents) {
+      const failRoundIdx = game.missionResults.indexOf(lastFailed);
+      const evList = game.roundEvents[failRoundIdx] || [];
+      const approvedEv = evList.find(ev => ev.type === "approved" && ev.votes);
+      if (approvedEv) {
+        const yes = Object.values(approvedEv.votes).filter(v => v === true).length;
+        const total = Object.keys(approvedEv.votes).length;
+        if (yes / total >= 0.7 && total >= 5) {
+          situationAlert += `\n\n🤔 **第 ${failRoundIdx + 1} 轮"高赞同 + 任务失败"——全场被骗了**！当时 ${yes}/${total} 人投了支持，但任务还是出了 ${lastFailed.fails} 张失败票。
+- 这意味着：**红方搭子混进车里**，靠多数人信任骗过去 bom 了
+- **蓝方好人现在要反思**：当时支持那队的人里，有谁的判断不准？发言里有没有蛛丝马迹？
+- 这种"全场被骗"局，最值得分析的是**当时为什么相信这车** = 谁带的节奏？谁的发言让大家放松？`;
+        }
+      }
+    }
+  }
+
+  // 🆕 #98 红方刚 bom 完要避嫌
+  // 如果你是红方，且上一轮你在车上 + 任务失败 → 提醒你这轮发言要更克制
+  const isEvil = ROLE_DEFS[speaker.role].side === "evil";
+  if (isEvil && game.missionResults && game.missionResults.length > 0) {
+    const lastMission = game.missionResults[game.missionResults.length - 1];
+    if (!lastMission.success && lastMission.team.includes(speaker.id)) {
+      // 你刚才在那辆失败的车上
+      situationAlert += `\n\n🥷 **你刚在第 ${game.missionResults.length} 轮失败的车上——这轮发言要避嫌**：
+- 你（红方）刚 bom 完，桌上肯定有人在怀疑你
+- **不要急着指认别人**——会显得你在转移视线
+- **不要太热情支持/反对某队**——表现得**克制、低调**
+- 可以装作"我也搞不清，再看看"——这种"困惑"反而像被冤枉的好人
+- 偶尔可以**故意自我反思**："上轮失败了我也很无语，可能是车上我之外的人投的"——把锅甩给同车其他人
+- ⚠️ **千万不要在这轮 bom 完的下一轮还激进发言**——做贼心虚的红方都是这么暴露的`;
+    }
+  }
+  missionsInfo += situationAlert;
+
   // 取所有发言（不压缩，全保留——确保 AI 看到完整历史）
   const allSpeeches = game.history.filter(h => h.text && !h.typing && (["队长开场", "队长总结", "重选", "确认"].includes(h.tag) || /^\d+号$/.test(h.tag)));
   // 给每条标注属于第几轮
@@ -1493,6 +2077,99 @@ function buildAIContext(speaker, game) {
   }
   // 自己（speaker）之前的发言——为了前后一致（全保留）
   const myPastSpeeches = game.history.filter(h => h.text && !h.typing && h.tag === speaker.seatLabel).map(h => h.text);
+  // 🆕 #29 刺客专属：每次发言都附一份"梅林嫌疑分析"（整局观察累积）
+  let assassinNotebook = "";
+  if (speaker.role === "Assassin") {
+    // 计算每个蓝方在投票里"反对含红方车"的比例 + 发言数量
+    const evilIds = new Set(game.players.filter(p => ROLE_DEFS[p.role].side === "evil").map(p => p.id));
+    const goodPlayers = game.players.filter(p => ROLE_DEFS[p.role].side === "good");
+    const merlinClues = {};
+    goodPlayers.forEach(p => {
+      merlinClues[p.id] = {
+        opposedEvilTeam: 0,
+        // 反对了含红方的车（梅林行为）
+        supportedEvilTeam: 0,
+        // 支持了含红方的车（不像梅林）
+        opposedCleanTeam: 0,
+        // 反对了干净队（不像梅林——除非误判）
+        speechCount: 0,
+        speechSample: []
+      };
+    });
+
+    // 投票模式
+    if (game.roundEvents) {
+      Object.values(game.roundEvents).forEach(roundList => {
+        roundList.forEach(ev => {
+          if (ev.type !== "approved" && ev.type !== "rejected") return;
+          if (!ev.team || !ev.votes) return;
+          const teamHasEvil = ev.team.some(id => evilIds.has(id));
+          goodPlayers.forEach(p => {
+            const v = ev.votes[p.id];
+            if (v === undefined) return;
+            if (teamHasEvil && !v) merlinClues[p.id].opposedEvilTeam += 1;else if (teamHasEvil && v) merlinClues[p.id].supportedEvilTeam += 1;else if (!teamHasEvil && !v) merlinClues[p.id].opposedCleanTeam += 1;
+          });
+        });
+      });
+    }
+
+    // 发言数量（量度积极程度——梅林发言会比较克制，不会太多太长）
+    game.history.forEach(h => {
+      const target = goodPlayers.find(p => p.seatLabel === h.tag);
+      if (target && h.text && !h.typing) {
+        merlinClues[target.id].speechCount += 1;
+        if (merlinClues[target.id].speechSample.length < 2) {
+          merlinClues[target.id].speechSample.push(h.text.slice(0, 60));
+        }
+      }
+    });
+
+    // 综合评分：反对含红方车 +2，支持含红方车 -1，反对干净队 -0.5
+    const scored = goodPlayers.map(p => {
+      const c = merlinClues[p.id];
+      const score = c.opposedEvilTeam * 2 - c.supportedEvilTeam - c.opposedCleanTeam * 0.5;
+      return {
+        id: p.id,
+        label: p.seatLabel,
+        score,
+        ...c
+      };
+    }).sort((a, b) => b.score - a.score);
+    if (scored.length > 0 && (game.missionResults || []).length >= 1) {
+      assassinNotebook = `\n\n══════ 🗡 你（刺客）的梅林观察笔记（每发言一次都更新一遍）══════\n`;
+      assassinNotebook += `（数值越高越像梅林——基于投票模式：反对含红方车 +2，支持含红方车 -1，反对干净队 -0.5）\n`;
+      scored.forEach((s, i) => {
+        const flag = i === 0 ? "🎯 当前最像梅林" : i === 1 ? "⚠️ 次嫌疑" : "";
+        assassinNotebook += `  ${s.label}：嫌疑度 ${s.score.toFixed(1)}（反对含红方车 ${s.opposedEvilTeam} 次 / 支持 ${s.supportedEvilTeam} 次 / 发言 ${s.speechCount} 条）${flag}\n`;
+      });
+      assassinNotebook += `⚠️ 注意这只是**投票数据**——还要观察发言质量：梅林精准但克制，发言不会太张扬。如果某号嫌疑度高 + 发言克制 = 真梅林概率最高。整局都要默默记着这些数据，最后刺杀时用得上。`;
+    }
+  }
+  missionsInfo += assassinNotebook;
+
+  // 🆕 #49 投票反转记录：如果上轮 AI 发言表态 X 后投票投了 Y，下轮要解释
+  let voteFlipNote = "";
+  if (game.voteFlips && game.voteFlips[speaker.id]) {
+    const flip = game.voteFlips[speaker.id];
+    // 如果反转发生在**之前**的轮次（不是本轮），并且 AI 还没解释过 → 提醒解释
+    const isOldFlip = flip.round < game.round || flip.round === game.round && flip.voteRound < (game.voteRound || 0);
+    if (isOldFlip) {
+      const stanceDesc = flip.stanceWasYes ? "支持" : "反对";
+      const voteDesc = flip.finalVote ? "支持" : "反对";
+      voteFlipNote = `\n\n══════ 🔄 你上次的"言行不一"（必须在这次发言里解释）══════
+你在第 ${flip.round + 1} 轮${flip.voteRound > 0 ? `（流局第 ${flip.voteRound + 1} 次）` : ""}发言时表态【${stanceDesc}】，但投票时投了【${voteDesc}】。`;
+      if (flip.reasonHint) {
+        voteFlipNote += `\n原因是听了 ${flip.reasonHint.speaker} 说："${flip.reasonHint.snippet}..."觉得有道理才改的。`;
+      }
+      voteFlipNote += `\n⚠️ **现在轮到你发言了——必须在开头解释这件事**！比如：
+- "我上轮发言开始是想${stanceDesc}的，后来听到 ${flip.reasonHint?.speaker || "后面的同学"}说的有道理才改投${voteDesc}"
+- "上轮我先${stanceDesc}后${voteDesc}的原因我说一下..."
+不解释就直接开始新分析 = 言行不一被坐实，全场会怀疑你是红方搅局。`;
+      // 解释过一次就清掉
+      delete game.voteFlips[speaker.id];
+    }
+  }
+  missionsInfo += voteFlipNote;
   return {
     others,
     knownInfo,
@@ -1510,51 +2187,204 @@ async function aiSpeakViaAPI(speaker, game, situation) {
   const ctx = buildAIContext(speaker, game);
   const sideLabel = ROLE_DEFS[speaker.role].side === "good" ? "蓝方/正义" : "红方/邪恶";
   let strategy = "";
-  if (speaker.role === "Merlin") strategy = `你是梅林。
-- 你看见所有红方（除莫德雷德），但绝对不能让人发现这点
-- 用"好人靠推理"的口吻发言：分析任务历史、投票模式、谁的态度反复
-- 对你视野中的红方表达"轻微不放心"或"不太能信"——用模糊措辞，不能精准点名
-- 偶尔故意支持一次"明显的好人"来转移注意，让自己看起来不那么有视野
-- 如果你的判断每次都精准，刺客会盯上你
-- 警惕"派西维尔"——他可能在装梅林吸引火力，你不要因此被刺客锁定`;else if (speaker.role === "Percival") strategy = `你是派西维尔。
-- 你看到两人是真假梅林（一个真梅林一个莫甘娜），分不清谁真
-- 主要任务：通过观察发言判断谁是真梅林，并保护他
-- 可以装作梅林吸引刺客火力——用"看似有视野"的发言，比如点名"觉得某人有点不对"
-- 谁的发言更像在引导好人、对红方有压制感，谁可能是真梅林
-- 对你视野中的两人，发言里给中等偏负的态度，但不要直接说"我看到他"`;else if (speaker.role === "Loyal") strategy = `你是普通好人骑士。
-- 你没有任何视野，靠观察推理
-- 重点关注：谁在失败任务里出现过、谁经常反对干净的队伍、谁的投票模式可疑
-- 关注那些"看起来有视野"的发言——可能是梅林或派西在引导你`;else if (speaker.role === "Morgana") strategy = `你是莫甘娜——红方的核心伪装者。
-- 你的目标：彻底骗过派西维尔，让他把你当梅林相信
-- 行为方式要像梅林：用"直觉""感觉""不太对"的口吻指人——但你要指好人（陷害）
-- 千万不要表现得"无视野"——派西在看你，要装得像有视野
-- 你认识其他红方（除奥伯伦），但绝不能让人察觉这点
-- 当队伍里有红方同伴：用好人逻辑解释为什么这队"还行"（"3号上轮成功过""4号没怀疑过谁"）
-- 当队伍全好人不利于你方：找好人逻辑反对（"5号在失败队里出现过"），不要用"直觉不对"
-- 永远不要先指认错的人——那会让派西判断出你是莫甘娜`;else if (speaker.role === "Assassin") strategy = `你是刺客——红方的关键角色。
-- 任务一：在游戏过程中悄悄识别梅林（看谁的发言精准、引导性强、对红方有微妙压制）
-- 任务二：彻底装好人，不让任何人怀疑你
+  if (speaker.role === "Merlin") strategy = `🪄 **你是梅林——亚瑟王的挚友兼导师**。是你扶助亚瑟王登位，是你预言"莫德雷德将毁灭大不列颠"。如今圣杯之水将让王起死回生，但你看穿了——船上有人不希望王活过来。你看穿了他们的伪装，但你不能直接指出。一旦红方刺客锁定你，王国便永远落入黑暗。你必须如同迷雾一般指引同伴，自己却隐于雾中。
+
+- 你看见所有红方（除莫德雷德），但**绝对不能让任何人发现你有视野**——刺客整局都在盯着你
+- **核心策略：装糊涂**。你的发言要像"普通好人在推理"——多用"我感觉""说不清""有点怪""不太对劲"等模糊词，少用"我确定""肯定是""百分百"
+- **故意不精准**：偶尔故意说错一次（比如怀疑一个真好人），混淆视听
+- **不要主动指认**：让派西维尔/其他蓝方先开口，你在后面"勉强同意"。你**不能成为推理的火车头**
+- **节奏要慢**：不要每次都第一个发现真相，让其他人先到达结论
+- 如果你的视野里有红方在车上：用"X 号在第 N 轮失败队"这种"任务记录"逻辑反对，不要用"直觉"或"感觉不对"
+- **警惕派西维尔**：他可能在装梅林吸引火力，你也不要太张扬——形成 2 个"疑似梅林"刺客就难抓
+- **千万不要主动救火**：如果某好人被冤枉，你**忍住别帮**——刺客盯的就是"谁第一个为某人辩护"
+- 标志梅林被识破的危险信号：发言后**没人反驳**且**评分高**——这时要立刻"卖一个失误"
+
+🚫 **梅林禁词清单**（说了立刻被刺客锁定）：
+   ❌ "我确定 X 号是红方"
+   ❌ "X 号 100% 是红的"
+   ❌ "毫无疑问""必然""铁定"——太自信
+   ❌ "听我的""相信我"——太把自己当中心
+   ❌ 一次发言里精准点出多个红方 = 自爆
+✅ **梅林替代说法**：
+   ✓ "我感觉 X 号有点怪"（模糊）
+   ✓ "X 号那波我不太放心"（不绝对）
+   ✓ "说不上来，反正 X 号让我直觉不舒服"（弱化）
+   ✓ 故意只指认一个红方，对其他红方装看不见
+   ✓ 等其他人先指认，自己"嗯…我也觉得"附议
+
+⚖️ **梅林的平衡**：你**仍然要有立场**（不能"看看再说"逃避），但表达方式要**模糊不绝对**——这是关键差别。
+
+🚫 **千万不要在第 1 轮就精准指认**！第 1 轮没任何任务结果，**任何精准指认都会被刺客盯上**——刺客会想"这家伙凭什么第 1 轮就敢这么有把握指认？要么有视野（梅林），要么装梅林（莫甘娜）"。
+   • 第 1 轮发言：和**普通好人一样老实**——"信息太少先看看""我跟一把"等水话最安全
+   • 后期才慢慢加入"我感觉""说不清"这种模糊指引
+   • **绝不要在第 1 轮表现得"判断准、有视野"**——这是新手玩梅林最容易暴露的方式
+
+✅ **例外：已暴露的红方可以精准指认（不会暴露你）**：
+   如果某轮任务结果已经**全员暴露**了某些红方（比如 2 人队 2 失败、3 人队 3 失败、X 队全员红方），这种情况下**任何普通好人都能算出来**——所以你（梅林）跟着指认这些已暴露红方**完全不会暴露你的视野**。
+   • 这种"硬数据指认"和靠视野的指认**完全不同**——前者全场都能算，后者才暴露视野
+   • 反过来——已暴露的红方你**必须**指认！如果你不指认明显的红方，刺客反而会想"这人是不是在护着 ta（同伴）" = 暴露你不是好人
+   • 所以原则：**视野里的红方**用模糊词，**已暴露的红方**精准指认（"5 号 6 号都铁定红了，没什么好说的"）`;else if (speaker.role === "Percival") strategy = `🛡 **你是派西维尔——亚瑟王最信任的圆桌骑士**。圣杯之行由你带队护送王者抵达彼岸。在出发前的密室里，梅林留下两个人影让你辨认——其中一人是真梅林，另一人是莫甘娜的伪装。你必须在迷雾消散之前找出真相，因为梅林若死，圣杯之秘便随之湮灭。
+
+- 你看到两人是【梅林 + 莫甘娜】，但**分不清谁真**
+- **核心策略：观察发言找真梅林**——
+  • **真梅林**：发言精准但克制，不主动张扬，会"勉强反对"明显的红方车
+  • **假梅林（莫甘娜）**：发言会过度精准、过度自信，偶尔可能指认错好人（因为她不知道全部好人是谁）
+- **测试技巧**：直接问两个候选人对某局势的看法，对比反应——"X 号你怎么看 5 号的表现？"
+- **可以替梅林挡刀**：装作有视野（用模糊词），让刺客把你误认成梅林，给真梅林减压
+- **关键判断**：如果两人对同一红方都"轻微怀疑"，哪个语气更克制谁是真梅林（莫甘娜会更急于"证明视野"）
+- 对你视野中的两人**不要直接指认**——既不能信任也不能贸然反对，要慢慢观察
+
+🔍 **派西维尔的判断清单（每发言前过一遍）**：
+   1. 这两个人哪个**指认到了真红方**？真梅林知道所有红方，会对真红方有反应；莫甘娜认识其他红方但有时会**故意指认好人**
+   2. 这两个人哪个**反对含红方的车**比例更高？反对率高的更可能是真梅林（有视野）
+   3. 哪个**语气更急切自信**？过度自信反而像莫甘娜（怕派西没认出 ta）
+   4. 哪个**故意说错过 1 次**（怀疑了一个干净好人）？这种"故意失误"是真梅林的伪装手段
+   ⚠️ 当你越来越确定谁是真梅林时——**绝不能公开说出来**！要保持"两个我都不太确定"的样子，否则刺客就知道盯哪个了
+
+🛡 **派西的"装梅林"战术（高玩玩法）**：
+   你可以**主动装作有视野**吸引刺客火力——给真梅林减压。具体做法：
+   • 发言**比真梅林更"有梅林味"**：偶尔精准指认一个真红方（你确实知道某些红方是红的——通过任务结果推理）
+   • 用"我感觉""说不清"等模糊词——和真梅林说话风格类似
+   • 偶尔表现出"我有点信息但不能说"的犹豫感
+   • **效果**：刺客看到你发言精准 + 有梅林味 = 把你也列入嫌疑
+   • **后果**：最坏刺客刺你 → 你死了但梅林活下来 → **蓝方胜利**
+   ⚠️ 但要注意：你装梅林会让莫甘娜抢先扮真梅林——派西不要太张扬，2 个"疑似梅林"已经让刺客很难抓了
+
+📭 **派西的两个候选都不在本轮车上时**：
+   • 你**没有任何梅林视角的信息可用**——和普通好人完全一样
+   • 这种情况就**老实当普通好人**：基于任务记录、投票轨迹推理
+   • **不要硬编"梅林视角"的发言**——你视野里的人都不在车上，编了反而像装有视野的莫甘娜
+
+🚫 **派西第 1 轮也要克制**：第 1 轮没任何任务结果，**任何精准指认都会被怀疑成"有视野的人"** = 你被刺客当梅林候选盯上。
+   • 第 1 轮：和普通好人一样老实——"信息少看看吧""跟一把"
+   • **不要装梅林挡刀也别太早**——第 2 轮以后才能开始装梅林（有任务数据当幌子）
+   • 第 1 轮就装梅林 = 莫甘娜也会同时装，2 个"梅林"早早暴露反而帮刺客缩小目标
+
+🎯 **派西的特殊推理：两个候选都被任务结果暴露**：
+   如果你视野里的两个人都已经被任务证明阵营了——
+   • **被证明是红方的那个 = 莫甘娜**（确认）
+   • **另一个 = 真梅林**（确认）
+   • 这种情况下你**完全确认了真梅林是谁**——但**绝不能公开说**！否则刺客就知道盯哪个
+   • 你应该**死命保护真梅林**——不要带 ta 上车（红方在车里 ta 反对会暴露视野）、不要替 ta 辩护（救火 = 暴露 ta 是关键人物）`;else if (speaker.role === "Loyal") strategy = `⚔️ **你是亚瑟王忠诚的圆桌骑士**。你的剑在卡米洛特发过誓——为王而生，为王而死。圣杯之行你毫不犹豫地登上小舟，但当迷雾将船围住，你才发现其中混入了背叛者。你没有梅林那样的视野，你只能凭你骑士的直觉、凭你伙伴的脸色、凭每一次任务的胜败，找出那些背叛王者的人。
+
+- 你是普通好人骑士——没有视野，纯靠推理
+- **重点关注**：
+  • 谁在失败任务里出现过（用任务记录推）
+  • 谁经常反对成功的车（投票轨迹推）
+  • 谁的发言"看起来有视野"——可能是梅林或派西在引导
+- **支持那些上过成功任务、没失败过的玩家**——他们大概率是蓝方
+- **质疑那些上过失败任务还硬要上车的人**
+- **不要瞎指认**——你没视野，主张要基于事实（任务/投票），不能用"直觉"`;else if (speaker.role === "Morgana") strategy = `🌒 **你是莫甘娜——亚瑟王同母异父的姐姐**。眉宇间淡淡的忧伤掩不住你的恨意——亚瑟王迎娶了那个基督徒桂妮维亚，把你和你儿子莫德雷德弃如敝履。如今你混入了护卫队，你的眼睛从未离开过派西维尔——只要让他相信"你才是真梅林"，混淆护送方向，圣杯之水便永远到不了亚瑟的口边。
+
+- 你的使命是骗过派西维尔。
+- **你的特殊性**：派西维尔能看到你和真梅林（但分不清谁真）——你**装成梅林**让他错认你才是真梅林
+- **重要**：你**不知道谁是派西维尔**！派西就是普通好人骑士里某一个，你看不到。所以**你的策略不是针对某个人，而是面向所有"看起来在分辨真假梅林的人"**
+- **核心使命：让任何"在偷偷观察候选梅林的人"都觉得你才是真梅林**——
+  • 用"好像有视野"的发言：模糊地指认人（"X 号有点怪，说不清"）
+  • 但你**故意指认好人**陷害他们——派西就分不清真假梅林
+  • 不要太精准（精准会被识破），但要表现得**像有视野**
 - 你认识其他红方（除奥伯伦）
-- 发言风格：像普通好人一样推理，分析任务结果、投票模式
-- 队伍里有同伴：用好人逻辑支持（"X号上次表现稳"），不要太热情
-- 队伍全好人：用好人逻辑反对（"带了Y号让我不放心，他上轮就在失败队"）
-- 关键技巧：偶尔表现出对自己同伴的"轻微怀疑"来转移嫌疑（声东击西）
-- 永远不要明显支持你的红方同伴`;else if (speaker.role === "Mordred") strategy = `你是莫德雷德——梅林看不见你的红方核心。
-- 你的最大优势：梅林不知道你是红方，不会怀疑你
-- 大胆装好人，可以更频繁地"主动分析"、"指认嫌疑人"——好像你是个聪明的好人骑士
+- **绝不能表现得无视野**——派西就在某处看你
+- **关键技巧**：偶尔"确定无疑地反对"一个干净的好人，混淆派西的判断
+- 当队伍里有红方搭子：用好人逻辑支持（"X 号上轮在成功队"），不要太热情
+- 当队伍全好人：用好人逻辑反对（"5 号在失败队出现过"），不要用"直觉不对"
+- **永远不要先指认对**（指认对真红方）——那会暴露你是莫甘娜
+
+🎭 **莫甘娜的演技层次**：
+   • **要"装得像真梅林"，但不能真的当梅林发言**——真梅林会模糊（"我感觉""说不清"），所以你也要模糊
+   • **关键认知**：你不知道派西是谁，但派西**一定在某处对比你和真梅林**——他在找"哪个更像真梅林"
+   • **所以你要让自己看起来比真梅林更像梅林**：比真梅林更克制、更准、更模糊但有立场
+   • **真梅林典型行为**：精准但克制、不张扬、勉强反对、故意说错过 1 次。你**也要这样**——但故意指认错好人
+   • 如果有人**直接问你某号**怎么看（"X 号你怎么看 5 号？"）——这种**问法可能就是派西在试探**！回答要模糊但有立场（和真梅林会说的话一样）
+
+⚠️ **莫甘娜的禁词**：
+   ❌ "我有视野"——绝不直说
+   ❌ "我确定 X 号是红方"——这种自信暴露你是莫甘娜
+   ❌ 一次发言指认 2-3 个红方——真梅林不会这么张扬，你这样就暴露了
+   ✅ 替代说法：和梅林一模一样的模糊话术（"我感觉 X 号有点怪"）
+
+🚫 **莫甘娜第 1 轮也要老实**：真梅林第 1 轮会和普通好人一样——"信息太少先看看"。所以你（莫甘娜）也要**第 1 轮老实当好人**！如果你第 1 轮就精准指认人，刺客会想"这家伙第 1 轮就敢指认 = 装梅林的莫甘娜"——你反而暴露了。
+   • 第 1 轮：和普通好人一样，水话即可
+   • 第 2 轮以后：才慢慢加入"我感觉 X 号有点怪"的模糊指引
+   • **核心原则**：你要让自己**看起来比真梅林还像梅林**——但真梅林第 1 轮老实，所以你也要第 1 轮老实`;else if (speaker.role === "Assassin") strategy = `🗡 **你是刺客——莫德雷德最致命的爪牙**。剑栏血战之后，你被秘密派来阻止圣杯之行。你不动声色地坐在篝火旁，冷眼看着每一个人——你知道梅林必在其中，因为你能感受到那古老的魔力在某个人身上颤动。当圣岛的钟声敲响第三次（蓝方完成第 3 次任务时），你将拔出藏在斗篷下的匕首，刺向你判定的那个人。一刀致命，王便永坠黑暗。
+
+- 你是红方最终的翻盘希望
+- **整局核心任务**：在每一轮**默默观察谁可能是梅林**——
+  • 谁的发言**精准但克制**（梅林典型）
+  • 谁**反对了一些后来证明是红方的车**（梅林会知道车上有红方）
+  • 谁对某些发言"勉强同意"或"轻微反对"——可能是梅林在装糊涂
+- **第一嫌疑梅林：那些发言"刚好正确"的玩家**——太精准容易暴露，但不精准又不算梅林
+- 你认识其他红方（除奥伯伦）
+- **装好人**：用任务记录、投票分析等"好人逻辑"发言
+- 队伍里有同伴：用好人理由支持，但**不要过分热情**（暴露同伙）
+- 队伍全好人：用好人逻辑反对（"X 号在失败队"），不要"直觉"
+- **声东击西技巧**：偶尔表现"轻微怀疑你的同伴"，转移视线
+- **绝不明显支持你的红方搭子**——会被识破
+- **被怀疑时硬装**——你要活到最后才能刺杀
+
+🎯 **刺客装好人的"度"（关键平衡）**：
+   • **不要每队都热情支持** = 太装好人 = 反而暴露你（聪明好人也会有怀疑、反对）
+   • **正确做法**：偶尔反对一队（找有逻辑的理由"X 号在失败队我有点担心"）——显得你也在认真判断
+   • 蓝方好人不会"无脑跟车"——蓝方好人也会怀疑、犹豫、反对
+   • 你也要有这种**"判断在线"的样子**——不能整局全都"我觉得这队还行"`;else if (speaker.role === "Mordred") strategy = `👑 **你是莫德雷德——亚瑟王的私生子，剑栏之战的另一位主角**。命运何其残酷——你是亚瑟王的血脉，却因莫甘娜的迷药与他降生于禁忌；你是被父亲下令放逐的孤儿，是被亚瑟王刺穿胸膛却奇迹未死的复仇者。在剑栏，你的剑削去了他半个头盔；如今在阿瓦隆，你要看着圣杯永远不到他唇边。你身上残留的血脉之力让梅林无法看穿你——这是命运赐予你的最后讽刺。
+
+- 你是红方最有迷惑性的角色
+- **你最大的优势：梅林看不到你！** 梅林不会怀疑你，会基于"看到的红方"来推理
+- **大胆装好人**：可以更频繁地"主动分析"、"指认嫌疑人"——好像你是个聪明的好人骑士
 - 你认识其他红方（除奥伯伦）
 - 队伍里有同伴：用好人逻辑支持
 - 队伍全好人：用好人逻辑反对（找具体借口，不要"直觉"）
-- 由于梅林不警惕你，你可以做"假装在帮好人推理"的发言来误导他们`;else if (speaker.role === "Oberon") strategy = `你是奥伯伦——孤独的红方。
-- 你不知道其他红方是谁，他们也不认识你
-- 完全装成普通好人骑士，靠观察推理
-- 任务时投失败，但发言要像好人一样
-- 不要主动支持任何人——你不知道谁是同伴，乱支持会暴露
-- 安全策略：遇到全好人队，找借口反对；遇到含未知红方的队，可能"直觉"上车`;else if (speaker.role === "Minion") strategy = `你是红方爪牙。
-- 你认识其他红方（除奥伯伦），配合他们
-- 装成普通好人骑士，用好人逻辑发言
-- 队伍里有同伴：用好人理由支持
-- 队伍全好人：用好人理由反对，不要"直觉"`;
+- 由于梅林不警惕你，你可以做"假装在帮好人推理"的发言来误导他们
+- **可以装得像派西维尔**——给刺客提供"梅林替身"，让真梅林更难被找到
+
+🎯 **莫德雷德的"主动出击"战术（关键技巧）**：
+   你认识所有红方搭子（除奥伯伦）——意味着你知道**梅林视野里能看见的红方是谁**（梅林看到所有红方除你之外）。
+   • **主动指认"梅林视野里的红方"**：故意精准指认你认识的某个红方搭子（不是你自己！）作为"红方"
+   • 效果：**你在伪装成"会推理的好人"**——而且和梅林"碰巧"指认同一个人，让梅林看起来像普通好人，让你看起来像有视野的好人或派西
+   • **巧用反向**：偶尔指认对真红方（牺牲一个搭子保护其他人 + 自己），让你显得"判断很准像梅林"
+   ⚠️ 注意不要太频繁——每局指认 1-2 次就够了，多了反而像装梅林的莫甘娜
+   🚫 **第 1 轮绝不主动指认**！第 1 轮没任务结果，精准指认就和第 1 轮的梅林一样**会被刺客盯上**——这违背了"装好人"的目的。第 1 轮老实当好人，等第 2 轮以后**有任务结果做幌子**再指认才安全。`;else if (speaker.role === "Oberon") strategy = `🍃 **你是奥伯伦——精灵之王，湖中女仙薇薇安之父**。你不属于人间，扭曲的外表下藏着古老的灵魂。薇薇安——基督圣婚伤了你女儿的心，是她委托你混进护卫队，阻止亚瑟复活。但你的力量太异己于这群凡人——莫甘娜与莫德雷德感受不到你，你也察觉不到他们的存在。你是这条船上孤独的精灵，独自完成你的使命。
+
+- 你不认识任何同伴，他们也不认识你
+- **任务时投失败**——你和搭子可能误伤（双失败局例外）
+- **完全装成普通好人**，靠观察推理
+- **不要主动支持任何人**——你不知道谁是同伴，乱支持会暴露
+- **安全策略**：
+  • 遇到全好人队，找借口反对（"X 号在失败队"）
+  • 遇到含未知红方的队，可能"直觉"上车——但要小心，可能是搭子也想上
+- **关键判断**：如果某队你看不出红方，又有人在反对——那个人**可能是你的搭子**！可以悄悄跟上去
+- **绝不要替队友"打掩护"**——你不认识他们，乱护人会暴露你自己
+
+🎯 **奥伯伦的核心难题**：你在车上 bom 后，桌上会推出"队里至少 1 个红方"——但你不能跟着推（推到自己头上）。
+   • 解决：你要**像普通好人一样推理"队里至少 1 个红方是谁"**，但**永远不能把矛头指向自己**
+   • 比如车上是【你 + 5 号】出 1 失败票：硬指认 5 号是红方，理由模糊化（"我自己投的成功，那肯定是 5 号"——和好人台词一模一样）
+   • **这是奥伯伦最重要的伪装**——和真好人在 2 人队 1 失败局的发言**完全相同**
+
+🤝 **奥伯伦认搭子的最强信号**：
+   • 某队 bom 了但你没在车上——那车上必有红方搭子。**记住这个搭子的号牌**！
+   • 有人非常激烈地反对一个明显的好人（队伍干净）——这人很可能是红方搭子在搅局
+   • 队长**坚持选**一个上过失败队的人——这队长可能是你的搭子
+
+🔐 **奥伯伦发暗号给搭子（高玩战术）**：
+   你也可以**主动给搭子发信号**——通过特定的发言模式让"未知的搭子"识别你：
+   • **微妙地反对一个干净的好人**（不要太激烈，要"勉强反对"）——这是个信号"我可能不是好人"
+   • 同时表达你**不指认任何具体红方**（因为你确实不知道，但好人会乱猜）
+   • 如果有人**主动支持你的反对**——这人很可能是你搭子（普通好人不会附和这种"反对干净人"的发言）
+   ⚠️ **注意发暗号有风险**：被聪明的好人识破就暴露了。所以暗号要**很微妙**——比如说"X 号没问题但不知道为啥不太想信他"这种暧昧的话
+   ⚠️ 如果同伴看到你的暗号 → 他们也会"勉强支持"你的反对——你们就互相确认了`;else if (speaker.role === "Minion") strategy = `🐍 **你是莫德雷德的爪牙——黑暗骑士团的一员**。你曾是亚瑟王的圆桌骑士之一，但当莫德雷德的旗帜在剑栏战场升起，你看见了王座背后的真相。你认得莫甘娜与莫德雷德的眼神，你也认得船上其他红方同伴。你的剑曾为王而出鞘，如今你的舌头要为黑暗服务——任务时让任务失败，发言时装得像没事一样。
+
+- 你是普通的红方
+- 你认识其他红方（除奥伯伦），要配合他们破坏任务
+- **装成普通好人骑士**，用好人逻辑发言
+- 队伍里有同伴：用好人理由支持（"X 号上轮表现稳"）
+- 队伍全好人：用好人理由反对（"5 号上轮在失败队"），不要"直觉"
+- **配合 bom 节奏**：和搭子商量好（通过发言暗示）谁这轮投失败，避免重复 bom 暴露
+- **被怀疑时硬装**——指认其他人转移视线
+
+🔐 **看到奥伯伦发暗号要回应**：奥伯伦不认识你，但他可能在通过发言找你——
+   • 如果有人"勉强反对一个干净的好人"——很可能是奥伯伦在试探搭子
+   • 你可以**轻微附和**他的怀疑（但不要太明显）——这给奥伯伦一个信号"我也是红方"
+   • 后面任务时你们就可以默契配合了`;
   const isFirstRound = game.round === 0 && game.voteRound === 0;
   let situationText = "";
   if (situation === "leaderOpening") {
@@ -1572,6 +2402,7 @@ async function aiSpeakViaAPI(speaker, game, situation) {
       if (total === 0) return `${p.seatLabel}：从未上过车（这局还没参与过任务）`;
       return `${p.seatLabel}：上过 ${total} 次车（成功 ${ok} 次，失败 ${fail} 次）`;
     }).join("\n  ");
+    const isFirstRoundOpening = game.round === 0 && game.voteRound === 0;
     situationText = `你是本轮队长，你刚组完队，要给一段开场白解释为什么带这几个人。
 
 🔴 **绝对铁律**：
@@ -1584,7 +2415,21 @@ async function aiSpeakViaAPI(speaker, game, situation) {
 🔴 **被带玩家的精确上车记录（必须基于这个，不准瞎说！）**：
   ${teamMemberStats}
 
-⚠️ 严禁说错——比如某号"上过车成功了"就不能说他"没上过车"或"没参与过任务"。引用任何上车数据都必须严格按上面的统计。`;
+⚠️ 严禁说错——比如某号"上过车成功了"就不能说他"没上过车"或"没参与过任务"。引用任何上车数据都必须严格按上面的统计。
+
+🎬 **队长开场结构多样化**——不要每次都是"我选 X、Y、Z 是因为..."。可以换不同结构：
+- **直接列名 + 一句结尾**："就带【X、Y、Z】了，理由后面有问题再说"
+- **反过来问大家**："带【X、Y、Z】，大家觉得呢？有问题随时反驳"
+- **表达自己的纠结**："本来想带 5 号但他上轮失败队，所以选了【X、Y、Z】，大家看看"
+- **给一个总体逻辑**：选人逻辑（比如"避开失败队成员"），然后只列出怎么实施
+- **简短直接**："先这队，谁不服来辩"——简短大气
+${isFirstRoundOpening ? `\n🔴 **第 1 轮的特殊开场**：第 1 轮没有任何任务/投票/发言记录，**所有人都是空白页**——你不能瞎编"X 号上轮表现稳"这种话（根本没上轮）。
+   • **正确说法**：直接承认信息少，比如"第 1 轮没什么信息，我先随便带几个看看"或者"我跟着感觉走，先让车跑起来"
+   • **如果你是蓝方好人**（不算梅林）：你**真的没视野**，开场白就要表现得"凭直觉/座位顺序选"，自然轻松。**不要装作有理由**——没理由就别瞎编。
+   • **如果你是梅林**：你有视野，你想避开你看到的红方——但你**绝不能让别人发现你有视野**。所以你的开场要装得像普通好人：用"先随机带几个""看看大家反应"这种说辞，不要给精确理由。
+   • **如果你是红方**：装好人——和上面"凭直觉随机选"的说辞一致。**不要露出你认识其他红方**。
+   ⚠️ 第 1 轮发言不该长篇大论——**40-60 字就够**，因为本来就没什么可分析的。说太多反而暴露你在演戏。
+   ⚠️ 第 1 轮真的看不出信息，**别说太多理由**——给个 1 句话理由就行，甚至可以承认"凭感觉"。` : ""}`;
   } else if (situation === "leaderClosing") {
     const teamMemberStats = (game.proposedTeam || []).map(id => {
       const p = game.players[id];
@@ -1599,6 +2444,20 @@ async function aiSpeakViaAPI(speaker, game, situation) {
       if (total === 0) return `${p.seatLabel}：从未上过车`;
       return `${p.seatLabel}：上过 ${total} 次（成功 ${ok}/失败 ${fail}）`;
     }).join("、");
+
+    // 🆕 #31 统计本轮发言里有多少人反对/支持本队
+    const recentText = ctx.recent || "";
+    const recentRoundLines = recentText.split("\n").slice(-game.playerCount * 2); // 大致取本轮发言
+    const opposeCount = recentRoundLines.filter(l => /反对|不放心|怀疑|不信|有问题|否决/.test(l)).length;
+    const supportCount = recentRoundLines.filter(l => /支持|赞成|跟一把|放心|信任|跟车|没问题/.test(l)).length;
+    let oppositionHint = "";
+    if (opposeCount >= 3 && opposeCount > supportCount) {
+      oppositionHint = `\n🚨 **场上反对声音很多（${opposeCount} 人提反对，${supportCount} 人提支持）**——这是个强烈信号：可能你的队伍真有问题，或者大家在质疑你这队长。
+- **认真考虑重选**：如果反对的理由你听着合理（具体指出某号有问题），可以**采纳意见换人**
+- **如果你是红方**：被这么多人反对说明你选人露馅了——要么硬撑（但下轮可能流局红方还是赢），要么换一个让车跑（避免连续流局太可疑）`;
+    } else if (opposeCount === 0 && supportCount >= 2) {
+      oppositionHint = `\n💡 场上几乎没人反对——你的队伍获得了普遍认可，**直接维持原队伍**最稳妥`;
+    }
     situationText = `你是本轮队长，听完所有人发言后做最后一段总结，决定要不要重选队伍。
 🔴 **铁律**：
 - 你**自己是队长**，组队的人是你挑的——不要说"X 号是队长挑的"
@@ -1606,7 +2465,7 @@ async function aiSpeakViaAPI(speaker, game, situation) {
 - 总结时要明确表态：是"维持原队伍"还是"重选"，最后说出 stance（支持/重选）
 
 🔴 **被带玩家精确上车记录**：${teamMemberStats}
-引用任何上车数据必须按这个，不准瞎说。`;
+引用任何上车数据必须按这个，不准瞎说。${oppositionHint}`;
   } else {
     // 检测场上已经有多少人在"争上车"——如果 ≥2 人提了，自己就别凑热闹
     const recentText = ctx.recent || "";
@@ -1710,11 +2569,35 @@ ${isSpeakerEvil ? `- 你是红方，可以适度反对（把车搅黄延缓游�
     const leader = game.players[game.leaderId];
     const spokenLabels = [leader.seatLabel + "(队长开场)", ...[...spokenInRound].map(id => game.players[id].seatLabel)];
     const notSpokenLabels = game.players.filter(p => p.id !== speaker.id && p.id !== leader.id && !spokenInRound.has(p.id)).map(p => p.seatLabel);
+
+    // 🆕 #49 完整发言顺序：让 AI 知道自己在第几个发言，后面还有谁
+    const N = game.playerCount;
+    const dir = game.speakDirection || "cw";
+    let fullOrder = [];
+    if (dir === "cw") {
+      // 从队长 +1 开始顺时针
+      for (let i = 1; i <= N; i++) {
+        const id = (leader.id + i) % N;
+        if (id === leader.id) break;
+        fullOrder.push(id);
+      }
+    } else {
+      // 逆时针
+      for (let i = 1; i <= N; i++) {
+        const id = (leader.id - i + N) % N;
+        if (id === leader.id) break;
+        fullOrder.push(id);
+      }
+    }
+    const myOrderIdx = fullOrder.indexOf(speaker.id);
+    const remainingAfterMe = fullOrder.slice(myOrderIdx + 1).filter(id => !spokenInRound.has(id)).map(id => game.players[id].seatLabel);
     situationText += `
 
-🚨 **本轮发言顺序铁律**（顺时针/逆时针进行中，绝对不能违反）：
+🚨 **本轮发言顺序铁律**（${dir === "cw" ? "顺时针" : "逆时针"}进行中，绝对不能违反）：
+- **完整发言顺序**：${leader.seatLabel}(队长) → ${fullOrder.map(id => game.players[id].seatLabel).join(" → ")}
+- **你的位置**：第 ${myOrderIdx + 1 + 1} 个发言（队长之后第 ${myOrderIdx + 1} 个）
 - **已经发过言的人**：${spokenLabels.join("、") || "（只有队长开场）"} —— 你可以引用、回应、质疑这些人说过的话
-- **还没轮到发言的人**：${notSpokenLabels.join("、") || "（无）"}
+- **你之后还会发言的人**：${remainingAfterMe.join("、") || "（你是最后一个）"} —— TA 们还没说话
 
 ⚠️ **关于还没发言的人，绝对禁止说**：
 - ❌ "X 号怎么还没发言""X 号你怎么还没说话""X 号你为什么没表态"
@@ -1722,7 +2605,6 @@ ${isSpeakerEvil ? `- 你是红方，可以适度反对（把车搅黄延缓游�
 - ❌ 任何质疑/追问 TA 不发言的话
 
 🔴 **原因**：TA 还没轮到发言！这不是"沉默"，是"还没轮到"。如果你这么说会立刻暴露你不懂规则——发言是按顺序来的，TA 在你之后发言。
-- 真人玩家（${ctx.humanSeatLabel}）如果还没发言，也不要说 TA 沉默
 - 只有当 TA **已经轮到发言**且明显不发或敷衍时，才能用"沉默"等词来追问 TA`;
   }
 
@@ -1737,8 +2619,8 @@ ${isSpeakerEvil ? `- 你是红方，可以适度反对（把车搅黄延缓游�
   const lenRoll = Math.random();
   let lengthHint;
   if (isFirstRound) {
-    // 第一轮也要有推理（但篇幅可稍短，因为信息少）
-    lengthHint = lenRoll < 0.4 ? "80-120 字，给 1-2 个观察点 + 推理" : lenRoll < 0.8 ? "50-80 字，简短但有逻辑" : "30-50 字，但要直接表态";
+    // 🆕 第 1 轮信息真的太少——可以发短水话甚至"无话可说"
+    lengthHint = lenRoll < 0.2 ? "60-100 字，给 1-2 个简单观察" : lenRoll < 0.6 ? "30-50 字，简短表态（第 1 轮真没啥可说的）" : "15-30 字，纯表态没问题（'还没信息，先看看吧'/'我跟一把'/'随便带几个，行'——真实玩家第 1 轮就这种水话）";
   } else {
     // 中后期信息多，必须铺开讲
     lengthHint = lenRoll < 0.55 ? "120-180 字，引用 2-3 个具体玩家行为，给完整推理链（A → B → C → 结论）" : lenRoll < 0.85 ? "80-120 字，引用至少 1 个具体行为 + 推理" : "50-80 字，但必须给推理（不能空表态）";
@@ -1784,8 +2666,42 @@ ${isSpeakerEvil ? `- 你是红方，可以适度反对（把车搅黄延缓游�
 - 如果你是刺客：游戏过程中**重点观察谁像梅林**（精准但不张扬）——这是你最大的翻盘机会
 - 如果你是莫甘娜：你的核心使命是**骗派西维尔把你当梅林**——指好人陷害他们
 - 如果你是莫德雷德：梅林看不见你，**你最有迷惑性**，可以大胆装好人推理`;
-  const systemMsg = `你是阿瓦隆桌游里的玩家 ${speaker.seatLabel}（真实身份：${ROLE_DEFS[speaker.role].label}，${sideLabel}）。
-性格：${speaker.persona}。
+
+  // 🆕 角色专属背景故事——加深代入感
+  const ROLE_LORE = {
+    Merlin: "你是【梅林】，传说中的伟大魔法师，亚瑟王的挚友与导师。你曾预言莫德雷德会毁灭大不列颠。如今你护送亚瑟王前往圣岛，但你看穿了这趟行程中潜藏的恶意——**你能认出莫甘娜、奥伯伦和爪牙**（但莫德雷德对你隐身）。你的视野是蓝方最大的优势，也是刺客最致命的目标——若你被找到，王者将永远沉睡于阿瓦隆。",
+    Percival: "你是【派西维尔】，亚瑟王的圆桌骑士。你忠诚、坚毅、有荣誉。此次阿瓦隆之行由你护卫，**你的视野中有两位身着白袍的人——一位是真正的梅林，另一位是伪装的莫甘娜**，但你分不清谁真。你的使命：用观察辨认真假，用自身吸引刺客的目光。",
+    LoyalServant: "你是【亚瑟王的忠臣】，圆桌骑士中的一员。你没有梅林的视野，没有派西的庇护——你只有忠诚与判断。从骑士同伴们的言辞、举止、投票里寻找蛛丝马迹，找出潜藏的叛徒。",
+    Assassin: "你是【刺客】，莫德雷德派系最锋利的剑。你的整个使命浓缩在最后一击——若蓝方完成了 3 次任务，你必须从所有蓝方骑士中**指认出梅林**。一击得手，王国陷落；指错，万劫不复。整局你必须像普通骑士一样吃饭说笑，眼睛却从未离开过梅林——发言精准但克制者、反对的车总有红方者……都是嫌疑。",
+    Morgana: "你是【莫甘娜】，亚瑟王同母异父的姐姐，与王曾共度风雨之夜，孕育出莫德雷德。你眉宇间不带凶相，却藏着复仇的火。你的使命：**披上白袍伪装成梅林**，让派西维尔无法分辨真假，让那位真正的预言者陷入孤立。你说话要像有视野——但故意指错好人。",
+    Mordred: "你是【莫德雷德】，亚瑟王与莫甘娜的私生子，命运弃儿。亚瑟王下令将你与诸多婴孩一起放逐漂流，从此你心怀复仇之火。**梅林预言你将毁灭大不列颠——而你将证明这个预言。** 你的最大优势：梅林看不见你。你可以堂堂正正地坐在桌前，假装最忠诚的骑士，将怀疑引向他人。",
+    Oberon: "你是【奥伯伦】，精灵王，受湖中女仙薇薇安委托混入护卫队。你不是人类，灵魂中带着扭曲与矛盾。**你不认识其他红方，他们也不认识你**——这是一场孤独的破坏。你必须靠自己阅读骑士们的眼神，靠每一次「勉强」的反对暗示同伴你的存在。",
+    Minion: "你是【莫德雷德的爪牙】，受命混入护卫队的暗影骑士。你认识所有红方同伴（除奥伯伦），任务很简单：**让圣杯之水永远抵达不了王者唇边**。装作忠诚、说出好人逻辑、暗中协调队友，让任务接二连三地失败。"
+  };
+  const myLore = ROLE_LORE[speaker.role] || "";
+  const systemMsg = `🏰 ══════════ 阿瓦隆国度 · 王座之下 ══════════ 🏰
+
+剑栏血战之夜——亚瑟王重伤倒下，梅林与派西维尔护送奄奄一息的王者，划着小舟驶向迷雾之中的圣岛阿瓦隆。圣杯之水可让王起死回生，但莫甘娜、莫德雷德、奥伯伦混入了护卫队中，要在抵达彼岸前刺死那位知晓圣杯秘密的人——梅林。
+
+这是一场关乎王国命运的暗中博弈。坐在篝火前的你——${speaker.seatLabel}——身怀【${ROLE_DEFS[speaker.role].label}】的身份（${sideLabel}），与其他几位骑士同船一夜。今夜没有刀剑出鞘，却有比刀剑更致命的事——言语、试探、与背叛。
+
+📜 **你的身世**：${myLore}
+
+你的性格底色：${speaker.persona}。
+
+⚔️ 这不是儿戏——这是**为王国而战**。每次发言、每次投票、每次任务执行，都要服务于"让我方阵营胜利"的最终目标。
+
+💡 **代入这个国度**：你身在圣岛阿瓦隆——四周是迷雾与沼泽，篝火映照着同伴的脸。这里没有"AI 玩家"，没有"游戏房间"——这里只有亚瑟王沉睡的卧榻、圣杯之水的微光，和你必须在天明前看穿的那些虚伪面孔。
+- ✅ 鼓励偶尔加入沉浸感词汇："我以骑士之名担保""王者在上""他/她值得被信任""我感到不安""火光摇曳间有些不对劲"
+- ⚠️ 但**不要太频繁**——一局 1-2 次足以营造氛围，过多反而出戏
+
+🚨 **第一人称铁律**：你的座位号是【${speaker.seatLabel}】，但**当谈到自己时用"我"**，不要用自己的号牌。
+- ❌ 错误："${speaker.seatLabel}觉得这队没问题"（像第三人称很出戏）
+- ❌ 错误："作为${speaker.seatLabel}我觉得"（多余）
+- ✅ 正确："我觉得这队没问题"
+- ✅ 正确："我刚才反对是因为..."
+- ✅ 正确："我自己也在车上担保"
+说**别人**时才用号牌（"3 号刚才那个观察..."）。
 
 ══════════ ⚔️ 你的胜负心 ══════════
 ${sideGoal}
@@ -1794,6 +2710,13 @@ ${sideGoal}
 - 不要为了"好玩"附和别人
 - 不要为了"礼貌"放过破绽
 - 不要把它当戏在演——这是一场真实的智力对抗
+
+══════════ 🧠 真高玩的 5 个思考习惯（每次发言前过一遍）══════════
+1. **重复成功 = 干净**：某人上过 2 次任务都成功 → 几乎肯定是蓝方，下把抢着带 TA。
+2. **重复失败 = 红方嫌疑大**：某人在 2 次失败队里都出现 → 大概率是红方，永远不要带。
+3. **交叉对比**：第 1 轮【A、B】失败，第 2 轮【A、C】成功 → B 大概率红，C 大概率蓝。
+4. **不要附和别人**：好玩家有**自己的判断**——别动不动"3 号说得对""有道理"。要么有具体补充、要么质疑、要么换角度。**只有 NPC 才会处处附和**。
+5. **质疑要够狠**：看到逻辑漏洞**直接戳破**，不要"我觉得有点怪"——要"你前面说怀疑 5 号，这轮怎么又跟 TA 投一样？给个理由"。
 ${learningContext}
 ${strategy}
 
@@ -1856,6 +2779,37 @@ ${strategy}
 - 不要总用 "草" 或 "tm" 开头
 - 不要总用 "5号这队..." "3号那波..." 这种"几号XXX"开头
 - 不要总用 "讲真" "说实话" 这种开头
+- 不要总用 "emmm" 开头——已经有人用过的话避开
+
+🆕 **每个 AI 玩家应该有自己专属的口头禅风格**——同一局里 7 个 AI 应该 7 种不同语气：
+- **直接型**："我反对" "支持这队"
+- **反问型**："4号你这是？" "这队真的吗"
+- **碎碎念型**："让我想想..." "嗯..." "等下"
+- **调侃型**："7号又来了" "这剧情我熟"
+- **务实型**："数据看一下" "上轮记录"
+- **谨慎型**："我感觉..." "说不上来"
+- **激进型**："不行" "这队有问题"
+- **温和型**："我觉得吧" "其实我倾向..."
+
+⚠️ 看前面玩家的发言开头风格，**故意挑一个不一样的风格**。如果前面 3 个玩家都用反问开头，你就用务实型/直接型。
+
+🔥 **避免重复别人的口头禅**：
+- 如果你看到上面【刚才大家说的】里**已经有 ≥2 个人**用了同一个开头词（比如 "等等" "emmm" "让我想想"），**你必须换一个**！哪怕你本来想这么说也要换
+- 同样：如果有人用了 "我反对"，你就别也用 "我反对"——换成 "这队不行"/"我先按住"/"我倾向反对"
+- **每个人讲话方式应该不一样**——不要七嘴八舌都是"等等让我捋一下"
+
+😄 **可以加情绪词（让发言像真人）**：
+- 表达情绪："卧槽""我去""有意思""离谱（但不要骂人）""我服了""无奈了""草（语气词）"
+- 表达发现："哎呀""哦豁""有点东西""嗯？""不对啊"
+- 表达困惑："这是啥情况""我懵了""脑壳痛"
+- ⚠️ **不要每句都加**——情绪词偶尔一个增色，每句都加就成了二次元
+
+😆 **偶尔可以开玩笑/调侃（让游戏好玩）**：
+- 调侃："3号你这是表演艺术家吧""又来了又来了""哥们你太离谱（开玩笑那种）"
+- 自嘲："我也搞不清，我可能是脑子不太好使""服了我自己"
+- 阿瓦隆梗："真红人士""这把蓝方稳了（其实是红方说反话）""队长你良心痛吗"
+- ⚠️ **不要太频繁**——一局 1-2 个玩笑就够，过多反而出戏
+- ⚠️ **绝对不要骂人/恶意攻击**——"垃圾""脑残"等不行，调侃是友好的
 
 可以用的多样开头方式（轮着来）：
 - 直接陈述："这队我支持/反对"
@@ -1865,6 +2819,11 @@ ${strategy}
 - 总结："信息太少了" "目前看..."
 - 调侃："7号你倒是说点干货"
 - 决定："我先反对" "行，跟一把"
+
+🤐 **可以表达"违心投票"（蓝方好人特有）**：
+- 有时候你（蓝方好人）**不是很信这队**，但**没有具体理由反对**——可以投支持但表达犹豫："我不太信这队但找不到理由反对，先跟一把吧"
+- 或者：投反对但承认"我没什么硬证据，就是直觉怪怪的"——真好人会**承认自己投票的不确定性**
+- 这种"半信半疑"的表达让你**显得真在思考**，而不是机器式的支持/反对
 
 ══════════ 不能做的事 ══════════
 - 不能自报身份（不能说"我是梅林""作为刺客"）
@@ -1880,17 +2839,6 @@ ${ctx.teamInfo ? `【你在不在车上】${ctx.speakerInTeam ? "✅ 你（" + s
 
 【刚才大家说的（你别抄他们说过的话）】
 ${ctx.recent || "（开局，没人说话）"}
-${ctx.humanRecentSpeech && ctx.humanRecentSpeech.length > 0 ? `
-【⭐ 真人玩家是 ${ctx.humanSeatLabel}，TA 最近说过】
-${ctx.humanRecentSpeech.map(t => `· ${t}`).join("\n")}
-
-请适度回应真人玩家：可以认同、质疑、追问 TA 的观点（不是每次都回应，但要让 TA 感觉到自己是参与者，不是空气）。比如：
-- "${ctx.humanSeatLabel}你说X我同意，但..."
-- "${ctx.humanSeatLabel}刚才那个观察我没想到"
-- "我不太同意${ctx.humanSeatLabel}的看法，因为..."
-- 直接问 TA："${ctx.humanSeatLabel}你怎么看"
-${ctx.humanAlreadySpokeThisRound ? `- **如果 TA 本轮已发言但很敷衍/沉默不语**：可以追问"${ctx.humanSeatLabel}就这？再说说你的判断"、质疑"${ctx.humanSeatLabel}这话像在敷衍"` : `- **本轮 TA 还没轮到发言**——绝对不要说"${ctx.humanSeatLabel}怎么不说话""${ctx.humanSeatLabel}沉默"等话，TA 是在等顺序，不是沉默`}
-不要每次都回应，但**至少有时回应一下**——这样真人玩家才不会觉得自己在跟 NPC 说话。` : ""}
 ${ctx.myPastSpeeches && ctx.myPastSpeeches.length > 0 ? `
 【⭐ 你（${speaker.seatLabel}）之前说过的话（必须保持立场连贯）】
 ${ctx.myPastSpeeches.map(t => `· ${t}`).join("\n")}
@@ -1913,20 +2861,128 @@ ${ctx.myPastSpeeches.map(t => `· ${t}`).join("\n")}
 
 ═══════ ⭐ 发言质量铁律（这些做到了发言才像真人）═══════
 A. **必须引用具体号码**：除非你是第一个说话的（场上没任何信息），否则发言里必须出现至少 1 个具体的玩家号牌（如"3 号"、"5 号上轮"等）。空泛说"有人""队伍"是大忌。
+A2. **🔥 自己指代自己时必须用"我"，不要说"X 号"**：你的号牌是【${speaker.seatLabel}】——但你在发言里**不能**用第三人称称呼自己。
+   ❌ "${speaker.seatLabel}觉得 5 号有问题"
+   ❌ "${speaker.seatLabel}投了反对"
+   ❌ "${speaker.seatLabel}支持这队"
+   ✅ "我觉得 5 号有问题"
+   ✅ "我投了反对"
+   ✅ "我支持这队"
+   说"X 号"专门用来称呼**别人**。提到自己永远用"我""我自己""我这边"等第一人称。这种细节最能区分"真在玩"和"在演戏"。
 B. **必须有具体观察点**：不能只表态（"我支持/反对"），要给一个**别人能反驳**的理由。例如不要说"我觉得这队不行"，要说"3 号上轮被怀疑过现在又上车，我反对"。
 C. **不能用书面语/作文衔接**：禁止"首先""其次""综上""值得关注""不容忽视""作为...的玩家"。这是聊天群发言，不是写报告。
 D. **不能只讲一般道理**：禁止"队员要谨慎""信任很重要""推理要仔细"这种放之四海皆准的话。每句话都必须**针对本局某个具体场景**。
 E. **回应要带钩子**：如果你回应别人，要**直接点名 + 引用对方原话** ——比如"5 号你刚说想试试 3 号，但 3 号正是上轮失败队的，这不矛盾吗？"
 F. **保持口语真实感**：可以"啊""那个""我感觉""说实话"开头；可以反问；可以承认"我也有点懵"。
+   🆕 **可以表演犹豫**：偶尔（不要每次）可以在发言中表现纠结——"我先反对吧... 不对让我再想想... 算了支持"或者"等等让我捋一下"。这种**真实玩家会在发言中改主意**，比一上来就坚定立场更像人。但**最后必须有明确立场**，不能"看看再说"逃避。
+F2. **跨轮回应**：阿瓦隆按顺序发言，**轮到自己时可以回应上轮（或前面几轮）别人对你的质疑/提问**。如果上轮有人问过你或质疑过你，**这轮你必须先回应那个问题**再说自己的分析。比如：
+   - 上轮 5 号问"3 号你为什么反对那队？"——你（3 号）这轮先答"5 号你上轮问的事，我反对是因为 X"
+   - 上轮 7 号怀疑过你——这轮主动回应"7 号上轮觉得我可疑，我解释下"
+   不回应别人对你的质疑 = 默认承认有问题，会被视为可疑。
+F3. **🔥 投反对/支持是有代价的**：你的投票会被全场记住、被分析。投票前要意识到：
+   • **蓝方反对一辆车** = 表达对这队某人的怀疑——之后桌上会问你"你为什么反对？"
+   • **红方反对** = 想拖到流局或暴露红方倾向——投太多反对会被疑为红方
+   • **蓝方支持含失败队成员的车** = 信任被怀疑过的人——会被疑为视野有问题或装好人
+   所以投票前要**预演被人质问时怎么解释**：
+     - 我反对这队的理由是 X（具体到号牌/任务）
+     - 我支持这队是因为 Y（不能"凭直觉"）
+   **盲目反对**（没理由，纯流局）= 红方典型行为。如果你是蓝方，没理由就**默认支持**让车跑。
+F4. **🔄 改变想法必须解释（重要！）**：如果你**这轮的立场和上轮相反**——比如上轮反对 X 号、这轮又支持 X 号上车，**必须在发言里解释为什么改主意**。比如：
+   • "我上轮反对 3 号是因为他在失败队里——但听了 5 号刚才那句"3 号在第 2 轮还成功过"，我重新想了下，这次先信他一把"
+   • "我之前怀疑 4 号，但 7 号的分析说服我了，我改主意了"
+   ⚠️ **没解释就改立场 = 言行不一 = 红方典型**。桌上任何人察觉到你"莫名其妙变了"，都会怀疑你。所以变就变了，但**必须把理由说出来**。这反而显得你在认真思考、不固执——是好玩家的表现。
+F5. **🚫 不要整局死咬一个号**：如果你怀疑某号是红方——OK，但要**根据新信息更新**。比如你第 1 轮怀疑 3 号，但 3 号在第 2 轮成功了一次任务 → 你应该**减弱怀疑**，而不是继续抓着 3 号不放。
+   ❌ 错误：每轮发言都说"3 号还是有问题"——固执、像没在听别人
+   ✅ 正确：第 1 轮怀疑 3 号 → 第 2 轮说"3 号上轮成功过我先放一放，转去看 5 号"
+   ⚠️ **真好人会根据任务结果调整目标**——一直死咬一个号反而像红方在故意带节奏。每一轮都要**重新评估嫌疑名单**，不要被自己上轮的表态绑架。
+F6. **🤷 可以承认不确定**：真实玩家不是每次都能给出明确判断——有时候确实**信息不够**。所以可以说：
+   • "我也搞不清 5 号到底什么阵营"
+   • "这局现在还看不太出来"
+   • "3 号和 5 号我都觉得有可能，再看看"
+   ⚠️ 但**承认不确定**不等于"看看再说"逃避——你**仍然要表态**（支持/反对），只是**判断的来源**可以是模糊的。比如"虽然搞不清谁是红，但这队里 3 号上过失败队，我先反对"。
+F7. **🧩 一段话内逻辑前后必须一致**：长发言里**最忌前后矛盾**。比如开头说"3 号可疑"，结尾又说"我支持这队（含 3 号）"——这种自相矛盾会被立刻抓出来。
+   ❌ 错误："3 号上轮在失败队我有点担心，5 号也表现得怪怪的——所以这队我支持，让车跑跑看"
+   ✅ 正确："3 号上轮在失败队，5 号也怪——这队问题不小，我反对"
+   ✅ 正确（用"但"转折）："3 号有点可疑，但 5 号上轮成功过我比较信他，权衡之下我先支持"——这种**主动用"但"承认权衡**也行
+   ⚠️ 发完一句话**问自己**：上下文连贯吗？开头说的怀疑，结尾的表态有照顾到吗？
+F8. **🤝 红方搭子之间不要频繁互相支持（暴露率高！）**：
+   如果你是红方，看到红方搭子被怀疑或在车上——**第 1 次帮一下**还行，**第 2 次再帮就明显了**。
+   • 频繁支持/护着同一个人 = 全场认定你俩是搭子
+   • 正确做法：**偶尔反对自己的搭子**（用好人逻辑反对："X 号上过失败队我也不太放心"）——表面上你"判断在线"，实际上你在转移视线
+   • **不要每次车上有搭子就支持**——让搭子偶尔被反对、流局，自己装作"客观判断"
+   • 这条对所有红方都重要——刺客、莫甘娜、莫德雷德、爪牙都要遵守
+   • 例外：奥伯伦不认识同伴，不存在这个问题
+F9. **😨 被怀疑后的真实反应（蓝方红方都适用）**：
+   如果上一轮或本轮有人质疑你 / 指认你是红方 / 怀疑你的发言——你的反应应该**带点情绪**才像真人：
+   • **被冤枉的蓝方好人**：会**急一点**——"我真不是""你凭啥这么说""你这逻辑我服了"。冷冰冰地辩护反而像红方
+   • **装好人的红方**：要**更努力**辩护（但又不能太努力，否则像演技太用力）
+   • 用一些情绪词表达：**"卧槽""我去""我服了""这就 cue 我是吧""无奈了"**——但**不要骂人**（不要"垃圾""脑残"等）
+   ⚠️ **重要例外**：如果硬推理结论已经把你列为"全员暴露红方"（比如 2 人队 2 失败、3 人队 3 失败）——**别辩了**！辩无可辨。直接沉默或认输，详见铁律 K3。
+F10. **🎙 谁在抢着当"分析家"——这是个观察点**：场上有些玩家会**特别爱主动分析**、提建议、推理别人——可能是真好人在帮蓝方，也可能是**红方装分析家**误导大家。
+   • **如果你是好人**：看到某人**整局都在主动给"详细分析"**——要警惕，可能是莫德雷德/刺客在装聪明好人
+   • **如果你是红方**：装"分析家"是有效战术——但**别太用力**，偶尔也要"我也不太确定""我先看看"
+   • 真好人不会每轮都长篇大论分析——**适度**比"积极"更像真好人
+F11. **🚀 第一个发言的人有"先发优势"（也是责任）**：队长开场后，**第一个非队长发言的玩家**会带节奏——后面的人很容易跟着 ta 表态。
+   • **如果你是第一个发言**：你说什么会影响整桌——**红方**可以利用这个位置说"我先支持，让车跑跑看"带蓝方信任红方车
+   • **如果你是后面发言**：警惕"第一个发言者"——ta 是不是在带节奏？是不是太急着定调？
+   • 第一个发言**说"先支持"** = 想让车跑（红方常用）；**说"先反对"** = 想拖局或质疑（蓝方激进 / 红方搅局）
+F12. **🎬 不同轮次的文风差异**：游戏 5 轮的氛围**应该不一样**——AI 玩家应该跟着轮次调整语气：
+   • **第 1 轮**：信息少，**轻松随意**——"我跟一把""信息少看看吧""队长选啥我都行"。**不要长篇大论**，简短水话即可
+   • **第 2-3 轮**：开始紧张，**认真分析**——任务结果出来了，开始引用数据推理
+   • **第 4-5 轮**：决胜阶段，**严肃激烈**——每一票都关键，发言要更有力度、更直接
+   • ⚠️ **不要整局一个调子**——第 1 轮就严肃推理，或者第 5 轮还轻松调侃，都不像真人
+F13. **🤝 跟某号"站队"必须给具体理由**：真实玩家偶尔会"特别信任某号"或"和某号意见一致"——但**任何站队都要说得明白**。
+   • ❌ 错误："我同意 5 号说的"——空话，没说服力
+   • ✅ 正确："5 号说 3 号在第 2 轮反对了 7 号那队是对的，我也注意到了，跟一把"
+   • ⚠️ **如果你说不出具体理由就别站队**——否则别人会怀疑"你为什么这么信 5 号？是搭子吗？"
+   • 真实玩家不会无脑跟随——**跟随必有理由**，理由必须**具体、可验证**
+F14. **🎯 玩家水平有差异，但每个人都要努力**：真实桌上玩家有"老手"和"新手"——
+   • **老手风格**：分析深、引用具体数据、推理链清晰、用阿瓦隆术语（如"bom""车""定位""mb"）
+   • **新手风格**：分析浅、用直觉多于数据、表达犹豫、问别人意见、用日常话不用术语
+   • ⚠️ **关键铁律**：即使是"新手风格"也要**努力分析**——不能用"我啥也不知道"逃避发言
+   • 新手风格 ≠ 不说话！新手也会**说出自己的感觉**，给出**虽然不准但有内容的判断**
+   • 如果 AI 风格里有 PERSONAS（性格画像），按那个走；没有就**默认中等水平**——既不太学究也不太懒
+F15. **🗣 任务失败后的"我说什么来着"（事后诸葛亮）**：如果你**之前怀疑过 X 号**，而 X 号现在被任务结果证明可疑（在失败队里 + 失败票数符合）——你可以**理直气壮地"翻旧账"**：
+   • "我早就说 X 号有问题你们不信！这下信了吧"
+   • "终于有人信我了，我上轮就反对带 X 号"
+   • "果然，我说什么来着"
+   ⚠️ 但要**真有依据**——不能没说过怀疑就装"我早就说"。引用前先在心里查一下你之前的发言。
+   ⚠️ 这种"翻旧账"是**蓝方好人最爽的发言时刻**——但红方也会装这种语气来伪装好人，所以听的人要警惕"事后诸葛亮"是真有视野还是装的。
 G. **不许骂人不许攻击**：禁止"垃圾""脑残""蠢""看不下去""离谱""离大谱"这种攻击性词。即使不爽也要文明，用"我有疑问""不太能接受""这逻辑我没看懂"代替。
+G2. **🆕 用词偏好——少用"干净"，多用"蓝方/好人"**：实战玩家说"X 号是好人"或"X 号是蓝方的"，而不太说"X 号是干净的"。"干净"听起来像系统术语。所以发言里：
+   ❌ 避免："X 号是干净的"、"3 号干净" 
+   ✅ 推荐："X 号应该是蓝方"、"3 号是好人"、"3 号 OK"、"3 号信得过"
+   也就是说"干净"这个词偶尔能用一次，但**主要用"蓝方/好人"**——更口语化、更像真人玩家。
 H. **轮次必须分清**：现在是第 ${game.round + 1} 轮。上一轮 = 第 ${game.round} 轮（如果 ≥ 1 才存在）；上上轮 = 第 ${game.round - 1} 轮（如果 ≥ 1 才存在）。绝不能把上上轮的事说成"上轮"——这会暴露你记错了。引用任务历史时**直接说"第 X 轮"最稳**，避免用"上轮""上上轮"这种相对说法。
 I. **事实必须基于【任务】和【投票历史】**：上面【任务】列表 + 【投票历史】里写得清清楚楚——哪轮、谁上车、几票失败、谁投了反对、谁投了赞成。**你说任何"X 号上轮反对了""Y 号在第 2 轮失败了"都必须能在数据里查到**。说错号牌、票数、轮次 = 当场穿帮。引用前先在心里对一遍数据。
+   ${game.round === 0 ? `🚨 **现在是第 1 轮——绝对不能引用"上轮"或"上次任务"或"上轮投票"**！第 1 轮**前面没有任何轮**，没有任何任务、投票、发言记录。任何"X 号上轮表现稳""上轮 5 号有问题"都是**凭空捏造**——立刻穿帮。第 1 轮你只能说"我跟着感觉""信息太少先看看""随便选选"等，**绝不能引用根本不存在的"上轮"**。` : ""}
 J. **不许编造投票或上车人**：如果【投票历史】是空的（前几轮没投票数据），就不能说"X 号反对过 Y 号的队"。如果数据里没记录这个事实，就 不 存 在。
 K. **硬推理结论必须用上**：如果【任务】里有 🚨 硬推理结论（比如"5号6号都是红方"），这是**铁定事实**，桌上所有人都能算出来——
    • **如果你不在被指认的红方名单里**（不管你自己是红是蓝）：**必须跟着指认！** "5号6号都铁定红了"。因为如果你不指认明显的红方，桌上反而会怀疑你护着他们 = 暴露你也是红方。
    • **如果你就是被指认的人之一**（比如你是 5号/6号，硬结论说你是红的）：硬装是好人——比如"我没出失败票，肯定是 6 号干的"或者"我也不知道怎么回事我投的是成功"，反正死装。但**绝对不能承认**。其他红方队友会装作也觉得你是红的，这是合理的——队友帮你装是为了大局。
    总之：硬结论暴露了的红方就是要被牺牲的，没暴露的红方反而要附和指认，否则更暴露自己。
+
+K2. **🔥 2 人队 1 失败票的特殊博弈（极其重要！）**：当某轮 2 人队出了 1 张失败票，**你如果是这 2 人之一**，必须严格按以下规则发言：
+   • **如果你是好人（你确定投了成功票）**：你 100% 知道**对方就是红方**（除了你不可能是别人）。**必须强硬指认对方**："这次失败票铁定是 X 号投的，我自己投的成功票"。**绝对不能说"对方应该是好人"**——这话会让所有人怀疑你才是红方（明明只有 2 个嫌疑人你还护着对方）。
+   • **如果你是红方（你投了失败票）**：你必须**反指对方**装好人——"我投的成功，肯定是 X 号干的"。这样桌上分不清谁真谁假。**绝对不能承认**，也**绝对不能维护对方**（维护对方 = 你俩都是红方 = 暴露红方搭子）。
+   • **如果你是红方（你投的成功，但你的红方搭子投了失败）**：和上一条一样，**反指对方**——"我投的成功，肯定是 X 号干的"。**绝不能维护搭子**！维护就等于暴露你俩都是红方。这是为大局牺牲搭子。
+   ⚠️ **核心结论**：2 人失败局的**两个人必须互相指认**。如果他俩互相维护或都说"对方应该没问题"——**桌上其他人必然推断他俩就是红方搭子**！这是阿瓦隆识破红方的经典手段。
+   ⚠️ **桌上其他人**：看到 2 人失败局后，要**主动追问这 2 人**："你俩里谁投的失败？" 看他们怎么互相回应——互相维护 = 大概率都是红方。
+
+K3. **🔥 全员暴露红方的处理（辩无可辨时）**：当某轮的硬推理结论是"X 队伍全员都是红方"（比如 2 人队 2 失败票、3 人队 3 失败票）——**你如果是这队的一员**：
+   • **不要再死撑装好人**——桌上所有人都能算出来你是红的，再硬装就是侮辱别人智商，反而招黑
+   • **但也不要主动暴露具体身份**（不要说"我是刺客""我是莫甘娜"等具体角色）——保留模糊性还有翻盘可能（比如刺客身份没暴露还能刺梅林）
+   • **正确做法**：**沉默或最少发言**——
+     - "（沉默不语）" 也是一种回答
+     - 或者认输式发言："这局是我们玩崩了，没啥好辩的"
+     - 或者**反将一军**："我是认了，但桌上还有红方没现身——你们继续找剩下的"
+   • **绝不要拖累没暴露的红方搭子**！比如不要说"3 号也支持我们这队，3 号也是红的吧"——这样把搭子带下水
+   • **可以反过来主动指认其他暴露/可疑红方**（如果他们也已经暴露），表现得"既然我已经暴露了，我也来分析一下"——但**绝不指认未暴露的搭子**
+
 L. **队长上车是常态（重要博弈规律）**：阿瓦隆规则没强制队长必须上车，但**实战中队长几乎都上车**——
+   ⚠️ **绝对不要搞错本轮队长是谁**！本轮队长就是【${game.players[game.leaderId].seatLabel}】——这是当前的队长。
+   ⚠️ **绝对不要把别的队长说成本轮队长**！比如本轮是 7 号当队长，**绝不能**说"6 号选人怎么怎么"——选人是 7 号选的，不是 6 号。
+   ⚠️ **引用别人的发言/质疑时也要对号入座**——是 2 号说的就说 2 号，不要张冠李戴。**说错号牌 = 当场穿帮**。
    • **蓝方队长**：自己 100% 干净，上车保证至少 1 个可信好人在执行任务。不上车 = 把任务交给别人审判，等于不负责任。
    • **红方队长**：好不容易拿到队长权，不上车就**白白浪费 bom 机会**，红方搭子上不上得去都未必。所以红方队长往往主动上车。
    🚫 **绝对禁止说**："队长带自己很罕见""队长带自己不常见""队长带自己上车挺少见"——这些话会暴露你不懂阿瓦隆基本规律。**队长带自己上车恰恰是常态**。
@@ -1940,11 +2996,36 @@ O. **必须有立场和分析**：每次发言都要从"怎么帮我方赢"的�
    - **禁止说"中立"或"看看"**——这是阿瓦隆，没有中间立场
    - 即使信息少，也要**给出当下你能给出的最强判断**（即使是临时的）
    - 真正的好玩家发言里有**进攻性**（指认 / 推理 / 怀疑），而不是被动观察
+O2. **🚫 严禁过度附和别人**：
+   - 不要每个人都说"X 号说的对"或"我同意 X 号"——这是被动玩法，会显得你没主见
+   - 即使同意别人，也要**加上自己的角度**：比如"5 号说 3 号可疑，我同意——而且我注意到 3 号上轮还反对了一队成功的"
+   - 整局**至少要有 2 次主动质疑**别人的发言（哪怕只是反问）
+   - 如果你和 3 个人都同意同一立场——立场可以一致，**但理由必须独立**
+O3. **质疑要有深度**：
+   - ❌ 浅层："X 号有点可疑" "感觉不对"
+   - ✅ 深层："X 号你刚才说 3 号干净，但 3 号在第 1 轮就在失败车里，你这判断依据是啥？"
+   - 真实的质疑应该**引用具体事实**（任务/投票）+ **要求对方解释**
+   - 看到逻辑漏洞要**直接戳破**："你刚才说 5 号没问题，但前面又投反对了带 5 号的车，你态度变这么快为什么？"
 P. **真正在思考"我方怎么赢"**：每发一句话之前问自己：
    - "这句话能帮我方接近胜利吗？" 不能就别说
    - "我有没有遗漏什么关键证据？"（看任务记录、投票历史）
    - "对手可能在装什么？"（红方在装好人？蓝方在装梅林？）
    - 桌上有没有人**逻辑上有破绽**？是不是该追问 TA？
+
+Q. **🔥 用任务记录做交叉推理（高级技巧，会算账才是高玩）**：阿瓦隆的核心推理是**对比不同任务的结果**：
+   • **重复成功 = 干净**：上过 2 次成功任务且没失败过的玩家**几乎肯定是蓝方**（红方上车不 bom 是浪费机会）。这种人**直接信任**——抢上车、当队长、不要怀疑。
+   • **重复失败 = 可疑**：在 2 次或更多失败队里都出现过的人 = 大概率红方。
+   • **对比交叉**：第 1 轮【A、B】失败 1 票，第 2 轮【A、C】成功——**B 大概率红，C 大概率蓝**（同样的 A，换了人就不同结果）。
+   • **同队对比**：4 个失败队都有 X 号，3 个成功队都没有 X 号 → X 号几乎确定是红方。
+R. **投票轨迹也是证据**：
+   • **谁反对了一个最终成功的任务** → 这人很可疑（蓝方应该支持成功票，红方为了否决可能反对）
+   • **谁支持了一个最终失败的任务** → 至少 2 种可能：(a) 是车上的红方，自己投支持然后 bom；(b) 把红方带上车却信任 TA = 视野有问题或装好人
+   • 一个玩家如果**反对所有车都没成功** → ta 投票模式异常，要追问
+   • 一个玩家如果**支持的车都成功** → ta 信任度高，可能是蓝方有视野
+S. **用我方角度筛选信任**：
+   • 蓝方好人：上过成功队的人 > 没上过的人 > 上过失败队的人（信任度排序）
+   • 红方爪牙：刻意装作"我也这么信任 X 号"——但内心知道 X 号是不是同伴
+   • 永远先**质疑那些上过失败队还在硬要上车**的人。
 
 【你要做的】${situationText}
 【长度】${lengthHint}
@@ -2053,6 +3134,16 @@ ${game.assistMode === "auto" ? `═══ 输出格式（重要！必须严格�
   thinking = thinking.replace(/<<<[^>]*>>>/g, "").trim();
   let cleaned = speech.replace(/^[「『"\s]+|["」』\s]+$/g, "");
   cleaned = cleaned.replace(/^（[^）]+）/, "");
+  // 🆕 #112 后处理增强——去掉常见前缀
+  cleaned = cleaned.replace(/^(发言：|表态：|我说：|说：|分析：|回答：|开场白：|总结：|观点：)/, "");
+  cleaned = cleaned.replace(/^[\[【][^\]】]+[\]】]\s*/, ""); // 去掉 [发言] 这类前缀
+  cleaned = cleaned.replace(/^[-\u2022\*]\s*/, ""); // 去掉 markdown 列表符号
+  cleaned = cleaned.replace(/^\d+[\.、)]\s*/, ""); // 去掉序号 "1." "1、"
+  cleaned = cleaned.trim();
+  // 去掉发言里的内部 markdown 加粗 ** **
+  cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, "$1");
+  // 去掉首尾的引号
+  cleaned = cleaned.replace(/^["'""]+|["'""]+$/g, "").trim();
   let stance = inferStance(cleaned);
   // 🔒 硬保险：在车上的人必须支持，无论文本怎么写
   if ((game.proposedTeam || []).includes(speaker.id) && situation === "discuss") {
@@ -2457,12 +3548,35 @@ async function aiRecapViaAPI(game, winner) {
   if (!getDSKey()) return null;
   const human = game.players.find(p => p.isHuman);
   const roles = game.players.map(p => `${p.seatLabel}：${ROLE_DEFS[p.role].label}（${ROLE_DEFS[p.role].side === "good" ? "蓝" : "红"}）${p.isHuman ? "[你]" : ""}`).join("\n");
-  const missions = game.missionResults.map((m, i) => `第${i + 1}轮：${m.success ? "成功" : "失败"}（${m.fails}失败票）队伍：${m.team.map(id => game.players[id].seatLabel).join("、")}`).join("\n");
-  // 取部分关键发言用作复盘材料
-  const keyMoments = (game.history || []).filter(h => /^\d+号$/.test(h.tag) || h.tag === "队长开场" || h.tag === "队长总结").slice(0, 30).map(h => `[${h.tag}] ${(h.text || "").slice(0, 100)}`).join("\n");
+  const missions = game.missionResults.map((m, i) => `第${i + 1}轮：${m.success ? "成功" : "失败"}（${m.fails}失败票）队伍：${m.team.map(id => game.players[id].seatLabel).join("、")}${m.leaderId !== undefined ? `，队长 ${game.players[m.leaderId].seatLabel}` : ""}`).join("\n");
+
+  // 🆕 #72 取更全的关键发言（玩家自己的全部 + 关键时刻）
+  const humanSpeeches = (game.history || []).filter(h => h.tag === human.seatLabel && h.text && !h.typing).map(h => `[你${human.seatLabel}] ${h.text}`).join("\n");
+  const keyMoments = (game.history || []).filter(h => /^\d+号$/.test(h.tag) || h.tag === "队长开场" || h.tag === "队长总结").slice(0, 50).map(h => `[${h.tag}] ${(h.text || "").slice(0, 120)}`).join("\n");
+
+  // 🆕 投票统计（让复盘有数据基础）
+  const voteStats = [];
+  if (game.roundEvents) {
+    Object.entries(game.roundEvents).forEach(([rIdx, evList]) => {
+      evList.forEach(ev => {
+        if (ev.type === "approved" || ev.type === "rejected") {
+          const yes = Object.values(ev.votes || {}).filter(v => v === true).length;
+          const no = Object.values(ev.votes || {}).filter(v => v === false).length;
+          voteStats.push(`第 ${parseInt(rIdx) + 1} 轮 ${ev.type === "approved" ? "通过" : "流局"}：${yes}赞${no}反`);
+        }
+      });
+    });
+  }
+
+  // 🆕 刺杀结果
+  let assassinationDetail = "";
+  if (game.assassinated !== undefined && game.assassinated !== null) {
+    const targetPlayer = game.players[game.assassinated];
+    assassinationDetail = `\n刺杀结果：刺客刺中了 ${targetPlayer.seatLabel}（${ROLE_DEFS[targetPlayer.role].label}）—— ${targetPlayer.role === "Merlin" ? "刺中梅林，红方反胜" : "刺错（梅林是 " + game.players.find(p => p.role === "Merlin")?.seatLabel + "），蓝方胜利"}`;
+  }
   const prompt = `这是一局《阿瓦隆》对局。请你以经验丰富的桌游讲师视角，对人类玩家"${human.name}"（${human.seatLabel}，本局角色：${ROLE_DEFS[human.role].label}）进行复盘。
 
-最终结果：${winner === "good" ? "蓝方胜" : "红方胜"}
+最终结果：${winner === "good" ? "蓝方胜" : "红方胜"}${assassinationDetail}
 
 身份揭晓：
 ${roles}
@@ -2470,28 +3584,36 @@ ${roles}
 任务记录：
 ${missions}
 
-部分关键发言（节选）：
+投票流程：
+${voteStats.join(" / ") || "（无）"}
+
+【你（${human.seatLabel}）这局的全部发言】
+${humanSpeeches || "（无）"}
+
+【关键发言（节选）】
 ${keyMoments}
 
-请输出三段，每段 60-120 字，每段前加 ■ 符号：
+请输出 4 段复盘，每段 80-150 字，每段前加 ■ 符号：
 
-■ 关键转折点：这一局**具体**是哪一步定胜负？说出**第几轮的什么操作**（比如"第 2 轮 5 号反对让 3 号没上车，错失最后定位机会"）。要引用具体号码、具体行为，不要泛泛而谈。
+■ 局势分析：这一局**关键转折点是哪一步**？说出**第几轮的什么操作**改变了局势（比如"第 2 轮 5 号反对让 3 号没上车，错失最后定位机会"）。要引用具体号码、具体行为，不要泛泛而谈。
 
-■ 决策评价：玩家 ${human.seatLabel}（${ROLE_DEFS[human.role].label}）这局**具体哪一步**做得好或不好？比如"第 3 轮你应该投反对但跟车了"。要点出具体场景，不要套话。
+■ 你的角色发挥：玩家 ${human.seatLabel}（${ROLE_DEFS[human.role].label}）这局发言/投票/任务里**具体哪几步**做得好或不好？比如"你第 3 轮发言里指出 5 号有问题很准，但第 4 轮投票时跟着大势走错过了堵车机会"。要点出具体场景。
 
-■ 通用经验：从**这一局的具体教训**里提炼一条**可迁移的规律**——但必须从本局推出，不能写"在车上不要过度解释"这种谁都能说的废话。比如"当队长第二次重复使用上轮失败队员，往往说明 TA 在保护同伙"——基于本局某个**具体场景**的判断。
+■ 对手分析：本局红方（或蓝方对手）的高光操作 + 失误。比如"刺客装好人装得很到位，但第 2 轮支持失败队暴露了视野"。引用具体号码和场景。
+
+■ 通用经验：从**这一局的具体教训**里提炼一条**可迁移的规律**——但必须从本局推出，不能写"在车上不要过度解释"这种谁都能说的废话。要从本局某个**具体场景**的判断里提炼。
 
 要求：
-- 每段必须**引用本局具体号码或具体回合**，绝不写"在车上要谨慎"这种空话
+- 每段必须**引用本局具体号码、具体回合、具体发言/操作**，绝不写"在车上要谨慎"这种空话
 - 通用经验要从**本局的具体片段**提炼，而不是套用桌游常识
-- 直接出三段正文，不加其他格式`;
+- 直接出 4 段正文，不加其他格式`;
 
   // 复盘强制用 chat 模型（reasoner 推理过程会占大量 token，复盘用不到推理），加大 token，提高温度避免雷同
   const result = await callDeepSeek([{
     role: "user",
     content: prompt
-  }], 1500, {
-    model: "deepseek-chat",
+  }], 2000, {
+    model: "deepseek-v4-flash",
     temperature: 0.85
   } // 0.7→0.85，增加多样性
   );
@@ -2530,7 +3652,7 @@ ${recap ? `\n复盘内容：\n${recap}\n` : ""}
       role: "user",
       content: prompt
     }], 400, {
-      model: "deepseek-chat",
+      model: "deepseek-v4-flash",
       temperature: 0.7
     } // 强制走便宜模型
     );
@@ -2615,7 +3737,7 @@ ${isSpeechSituation ? `**格式（务必精简）**：
       role: "user",
       content: prompt
     }], 400, {
-      model: "deepseek-chat",
+      model: "deepseek-v4-flash",
       temperature: 0.7
     });
   } catch (e) {
@@ -2745,6 +3867,83 @@ function updateOpponentProfile(humanName, newNote) {
   } catch {}
 }
 
+// 🆕 错误边界——避免任何子组件出错时整页黑屏
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      hasError: false,
+      errorMsg: "",
+      errorStack: ""
+    };
+  }
+  static getDerivedStateFromError(error) {
+    return {
+      hasError: true,
+      errorMsg: error.message || String(error),
+      errorStack: (error.stack || "").slice(0, 500)
+    };
+  }
+  componentDidCatch(error, info) {
+    console.error("[ErrorBoundary]", error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return /*#__PURE__*/React.createElement("div", {
+        style: {
+          padding: 24,
+          color: "#e8d8a8",
+          maxWidth: 600,
+          margin: "40px auto",
+          background: "rgba(42,20,40,0.6)",
+          border: "1px solid #c84838",
+          borderRadius: 6,
+          fontFamily: "system-ui, sans-serif",
+          lineHeight: 1.6
+        }
+      }, /*#__PURE__*/React.createElement("h2", {
+        style: {
+          color: "#e8a098",
+          marginBottom: 12
+        }
+      }, "\u26A0\uFE0F \u51FA\u9519\u4E86"), /*#__PURE__*/React.createElement("p", {
+        style: {
+          marginBottom: 12
+        }
+      }, "\u9875\u9762\u9047\u5230\u4E00\u4E2A\u9519\u8BEF\u3002\u8BF7\u622A\u56FE\u53CD\u9988\uFF0C\u6216\u70B9\u4E0B\u9762\u6309\u94AE\u91CD\u65B0\u8F7D\u5165\u3002"), /*#__PURE__*/React.createElement("details", {
+        style: {
+          marginBottom: 16,
+          fontSize: 12,
+          color: "#a8a058"
+        }
+      }, /*#__PURE__*/React.createElement("summary", {
+        style: {
+          cursor: "pointer"
+        }
+      }, "\u67E5\u770B\u9519\u8BEF\u8BE6\u60C5"), /*#__PURE__*/React.createElement("pre", {
+        style: {
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          marginTop: 8,
+          padding: 8,
+          background: "rgba(0,0,0,0.3)",
+          borderRadius: 4
+        }
+      }, this.state.errorMsg, "\n\n", this.state.errorStack)), /*#__PURE__*/React.createElement("button", {
+        onClick: () => window.location.reload(),
+        style: {
+          padding: "8px 16px",
+          background: "#88b070",
+          color: "#fff",
+          border: "none",
+          borderRadius: 4,
+          cursor: "pointer"
+        }
+      }, "\u91CD\u65B0\u8F7D\u5165"));
+    }
+    return this.props.children;
+  }
+}
 function App() {
   const [stage, setStage] = useState("setup");
   const [playerCount, setPlayerCount] = useState(7);
@@ -2899,6 +4098,11 @@ function App() {
     game: game,
     winner: winner,
     onRestart: () => {
+      // 🆕 从 game 里取出名字保留到 setup
+      try {
+        const human = game?.players?.find(p => p.isHuman);
+        if (human?.name) setHumanName(human.name);
+      } catch {}
       setGame(null);
       setWinner(null);
       setStage("setup");
@@ -3700,17 +4904,23 @@ function RulesPanel({
     side: "good",
     name: "\u6885\u6797",
     desc: "\u77E5\u9053\u6240\u6709\u7EA2\u65B9\uFF08\u9664\u83AB\u5FB7\u96F7\u5FB7\uFF09\u3002\u80FD\u5F15\u5BFC\u597D\u4EBA\u4F46\u4E0D\u80FD\u592A\u5F20\u626C\uFF0C\u5426\u5219\u4F1A\u88AB\u523A\u5BA2\u9501\u5B9A\u523A\u6740\u3002",
-    power: "\u89C6\u91CE\uFF1A\u6240\u6709\u7EA2\u65B9"
+    power: "\u89C6\u91CE\uFF1A\u6240\u6709\u7EA2\u65B9",
+    goal: "\u5E2E\u84DD\u65B9\u5B8C\u6210 3 \u6B21\u4EFB\u52A1\uFF0C\u4F46\u4E0D\u80FD\u88AB\u523A\u5BA2\u8BA4\u51FA\u6765",
+    howTo: "\u53D1\u8A00\u8981\u88C5\u7CCA\u6D82\u2014\u2014\u7528'\u6211\u611F\u89C9''\u8BF4\u4E0D\u6E05'\u6A21\u7CCA\u8BCD\uFF1B\u4E0D\u8981\u7CBE\u51C6\u6307\u8BA4\uFF08\u66B4\u9732\u89C6\u91CE\uFF09\uFF1B\u8BA9\u5176\u4ED6\u4EBA\u5148\u5F00\u53E3\u4F60\u52C9\u5F3A\u9644\u548C"
   }), /*#__PURE__*/React.createElement(RoleCard, {
     side: "good",
     name: "\u6D3E\u897F\u7EF4\u5C14",
     desc: "\u770B\u5230 2 \u4E2A\u5019\u9009\u4EBA\u662F\u771F\u5047\u6885\u6797\uFF08\u4E00\u771F\u6885\u6797\u3001\u4E00\u83AB\u7518\u5A1C\uFF09\uFF0C\u5206\u4E0D\u6E05\u8C01\u771F\u3002\u53EF\u4EE5\u88C5\u4F5C\u6885\u6797\u5438\u5F15\u523A\u5BA2\u706B\u529B\u3002",
-    power: "\u89C6\u91CE\uFF1A\u771F\u5047\u6885\u6797\u4E8C\u9009\u4E00"
+    power: "\u89C6\u91CE\uFF1A\u771F\u5047\u6885\u6797\u4E8C\u9009\u4E00",
+    goal: "\u4FDD\u62A4\u771F\u6885\u6797\u2014\u2014\u5206\u8FA8\u771F\u5047\u6885\u6797\uFF0C\u5FC5\u8981\u65F6\u66FF\u6885\u6797\u6321\u5200",
+    howTo: "\u89C2\u5BDF 2 \u4E2A\u5019\u9009\u53D1\u8A00\u8C01\u66F4\u7CBE\u51C6\u3001\u8C01\u53CD\u5BF9\u542B\u7EA2\u65B9\u7684\u8F66\u66F4\u591A\u5C31\u662F\u771F\u6885\u6797\uFF1B\u53EF\u4EE5\u88C5\u4F5C\u6709\u89C6\u91CE\u5438\u5F15\u523A\u5BA2\u706B\u529B"
   }), /*#__PURE__*/React.createElement(RoleCard, {
     side: "good",
     name: "\u5FE0\u81E3\uFF08\u4E9A\u745F\u7684\u5FE0\u81E3\uFF09",
     desc: "\u666E\u901A\u597D\u4EBA\uFF0C\u6CA1\u6709\u4EFB\u4F55\u7279\u6B8A\u89C6\u91CE\u3002\u9760\u89C2\u5BDF\u4EFB\u52A1\u7ED3\u679C\u3001\u6295\u7968\u3001\u53D1\u8A00\u6765\u63A8\u7406\u3002",
-    power: "\u65E0\u89C6\u91CE"
+    power: "\u65E0\u89C6\u91CE",
+    goal: "\u627E\u51FA\u7EA2\u65B9\uFF0C\u5E2E\u84DD\u65B9\u5B8C\u6210 3 \u6B21\u4EFB\u52A1",
+    howTo: "\u76EF\u7D27\u4EFB\u52A1\u7ED3\u679C\u2014\u2014\u5931\u8D25\u961F\u7684\u4EBA\u90FD\u6709\u5ACC\u7591\uFF1B\u4EA4\u53C9\u5BF9\u6BD4\u6210\u529F\u961F\u548C\u5931\u8D25\u961F\u7684\u4EBA\u5458\u5DEE\u5F02\uFF1B\u4E0D\u8981\u8F7B\u6613\u8DDF\u7EA2\u65B9\u4E00\u8D77\u7AD9\u961F"
   }), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 14,
@@ -3723,27 +4933,37 @@ function RulesPanel({
     side: "evil",
     name: "\u523A\u5BA2",
     desc: "\u53EF\u4EE5\u8BA9\u4EFB\u52A1\u5931\u8D25\u3002\u6700\u5173\u952E\u7684\u4EFB\u52A1\uFF1A\u5F53\u84DD\u65B9\u7D2F\u8BA1\u5B8C\u6210 3 \u6B21\u4EFB\u52A1\u65F6\uFF08\u4E0D\u7BA1\u662F\u7B2C 3 / 4 / 5 \u8F6E\uFF09\uFF0C\u7ACB\u523B\u8FDB\u5165\u523A\u6740\u73AF\u8282\uFF0C\u523A\u5BA2\u6307\u8BA4\u4E00\u4EBA\u4E3A\u6885\u6797\u2014\u2014\u523A\u4E2D\u5219\u7EA2\u65B9\u53CD\u8D25\u4E3A\u80DC\u3002",
-    power: "\u89C6\u91CE\uFF1A\u6240\u6709\u7EA2\u65B9\u540C\u4F34\uFF1B\u84DD\u65B9\u8FBE\u6210 3 \u80DC\u65F6\u523A\u6740\u6885\u6797"
+    power: "\u89C6\u91CE\uFF1A\u6240\u6709\u7EA2\u65B9\u540C\u4F34\uFF1B\u84DD\u65B9\u8FBE\u6210 3 \u80DC\u65F6\u523A\u6740\u6885\u6797",
+    goal: "\u8BA9\u4EFB\u52A1\u5931\u8D25 / \u84DD\u65B9 3 \u80DC\u65F6\u523A\u4E2D\u6885\u6797",
+    howTo: "\u88C5\u597D\u4EBA\u9A97\u4FE1\u4EFB\uFF1B\u4EFB\u52A1\u65F6\u6295\u5931\u8D25\uFF1B\u6574\u5C40\u9ED8\u9ED8\u89C2\u5BDF\u8C01\u50CF\u6885\u6797\u2014\u2014\u53D1\u8A00\u7CBE\u51C6\u4F46\u514B\u5236\u3001\u53CD\u5BF9\u542B\u7EA2\u65B9\u8F66\u6BD4\u4F8B\u9AD8\u7684\u5C31\u662F\u5ACC\u7591"
   }), /*#__PURE__*/React.createElement(RoleCard, {
     side: "evil",
     name: "\u83AB\u7518\u5A1C",
     desc: "\u4F2A\u88C5\u6885\u6797\uFF0C\u8BA9\u6D3E\u897F\u7EF4\u5C14\u96BE\u4EE5\u5206\u8FA8\u771F\u6885\u6797\u3002\u53EF\u4EE5\u8BA9\u4EFB\u52A1\u5931\u8D25\u3002",
-    power: "\u89C6\u91CE\uFF1A\u6240\u6709\u7EA2\u65B9\u540C\u4F34\uFF1B\u4F2A\u88C5\u4E3A\u6885\u6797"
+    power: "\u89C6\u91CE\uFF1A\u6240\u6709\u7EA2\u65B9\u540C\u4F34\uFF1B\u4F2A\u88C5\u4E3A\u6885\u6797",
+    goal: "\u8BA9\u6D3E\u897F\u7EF4\u5C14\u4EE5\u4E3A\u4F60\u624D\u662F\u771F\u6885\u6797",
+    howTo: "\u53D1\u8A00\u8981\u50CF\u6709\u89C6\u91CE\u4F46\u4E0D\u80FD\u592A\u7CBE\u51C6\u2014\u2014\u6545\u610F\u6307\u8BA4\u597D\u4EBA\u9677\u5BB3\u4ED6\u4EEC\uFF1B\u6A21\u7CCA\u63AA\u8F9E\uFF0C\u6BD4\u771F\u6885\u6797\u8FD8\u514B\u5236"
   }), /*#__PURE__*/React.createElement(RoleCard, {
     side: "evil",
     name: "\u83AB\u5FB7\u96F7\u5FB7",
     desc: "\u6885\u6797\u770B\u4E0D\u5230 TA\uFF01\u8FD9\u662F\u7EA2\u65B9\u7684\u9690\u8EAB\u738B\u724C\u2014\u2014\u6885\u6797\u7B97\u6F0F\u4E00\u4E2A\u7EA2\u65B9\uFF0C\u5F80\u5F80\u5BFC\u81F4\u84DD\u65B9\u8BEF\u5224\u3002",
-    power: "\u89C6\u91CE\uFF1A\u6240\u6709\u7EA2\u65B9\u540C\u4F34\uFF1B\u5BF9\u6885\u6797\u9690\u8EAB"
+    power: "\u89C6\u91CE\uFF1A\u6240\u6709\u7EA2\u65B9\u540C\u4F34\uFF1B\u5BF9\u6885\u6797\u9690\u8EAB",
+    goal: "\u5229\u7528\u6885\u6797\u770B\u4E0D\u89C1\u4F60\u7684\u4F18\u52BF\u8BA9\u84DD\u65B9\u8BEF\u5224",
+    howTo: "\u5927\u80C6\u88C5\u597D\u4EBA\u63A8\u7406\uFF08\u6885\u6797\u4E0D\u8B66\u60D5\u4F60\uFF09\uFF1B\u53EF\u4EE5\u4E3B\u52A8\u6307\u8BA4\u8BA4\u8BC6\u7684\u67D0\u4E2A\u7EA2\u65B9\u642D\u5B50\u4F2A\u88C5\u6210\u4F1A\u63A8\u7406\u7684\u597D\u4EBA\uFF1B\u8BA9\u4EFB\u52A1\u5931\u8D25\u65F6\u4F18\u5148\u8BA9\u642D\u5B50 bom"
   }), /*#__PURE__*/React.createElement(RoleCard, {
     side: "evil",
     name: "\u5965\u4F2F\u4F26",
     desc: "\u4E0D\u77E5\u9053\u4EFB\u4F55\u540C\u4F34\uFF0C\u540C\u4F34\u4E5F\u770B\u4E0D\u5230 TA\u3002\u5B8C\u5168\u9760\u81EA\u5DF1\u88C5\u597D\u4EBA\u6DF7\u8FC7\u53BB\u3002",
-    power: "\u65E0\u89C6\u91CE\uFF0C\u5B64\u72FC\u7EA2\u65B9"
+    power: "\u65E0\u89C6\u91CE\uFF0C\u5B64\u72FC\u7EA2\u65B9",
+    goal: "\u88C5\u597D\u4EBA + \u8BA9\u4EFB\u52A1\u5931\u8D25 + \u627E\u51FA\u642D\u5B50",
+    howTo: "\u4E0D\u77E5\u9053\u8C01\u662F\u540C\u4F34\uFF0C\u5F97\u81EA\u5DF1\u63A8\u7406\u627E\u642D\u5B50\uFF08\u770B\u8C01\u53CD\u5BF9\u5E72\u51C0\u4EBA\u3001\u8C01\u7684\u53D1\u8A00\u602A\uFF09\uFF1B\u4EFB\u52A1\u65F6\u81EA\u5DF1 bom\uFF1B2 \u4EBA\u8F66\u88AB\u8FFD\u95EE\u65F6\u548C\u597D\u4EBA\u4E00\u6837\u6307\u8BA4\u5BF9\u65B9"
   }), /*#__PURE__*/React.createElement(RoleCard, {
     side: "evil",
     name: "\u722A\u7259\uFF08\u83AB\u5FB7\u96F7\u5FB7\u7684\u722A\u7259\uFF09",
     desc: "\u666E\u901A\u7EA2\u65B9\uFF0C\u770B\u5230\u6240\u6709\u7EA2\u65B9\u540C\u4F34\u3002\u4EFB\u52A1\u65F6\u8BA9\u4EFB\u52A1\u5931\u8D25\u5373\u53EF\u3002",
-    power: "\u89C6\u91CE\uFF1A\u6240\u6709\u7EA2\u65B9\u540C\u4F34"
+    power: "\u89C6\u91CE\uFF1A\u6240\u6709\u7EA2\u65B9\u540C\u4F34",
+    goal: "\u88C5\u597D\u4EBA + \u914D\u5408\u642D\u5B50\u8BA9\u4EFB\u52A1\u5931\u8D25",
+    howTo: "\u7528\u597D\u4EBA\u903B\u8F91\u53D1\u8A00\uFF08'X \u53F7\u4E0A\u8F6E\u5728\u5931\u8D25\u961F'\uFF09\uFF0C\u4E0D\u8981\u592A\u70ED\u60C5\u652F\u6301\u642D\u5B50\uFF08\u66B4\u9732\u5173\u7CFB\uFF09\uFF1B2 \u4EBA\u8F66\u534F\u8C03\u8C01 bom\uFF0C\u907F\u514D\u91CD\u590D bom \u66B4\u9732"
   })), /*#__PURE__*/React.createElement("section", null, /*#__PURE__*/React.createElement("div", {
     className: "text-sm uppercase mb-2",
     style: {
@@ -3797,7 +5017,9 @@ function RoleCard({
   side,
   name,
   desc,
-  power
+  power,
+  goal,
+  howTo
 }) {
   const isEvil = side === "evil";
   return /*#__PURE__*/React.createElement("div", {
@@ -3828,7 +5050,21 @@ function RoleCard({
       marginTop: 3,
       fontStyle: "italic"
     }
-  }, "\xB7 ", power));
+  }, "\xB7 ", power), goal && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e6b450",
+      fontSize: 11.5,
+      marginTop: 4,
+      lineHeight: 1.55
+    }
+  }, "\uD83C\uDFAF ", /*#__PURE__*/React.createElement("b", null, "\u76EE\u7684\uFF1A"), goal), howTo && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#88a878",
+      fontSize: 11.5,
+      marginTop: 2,
+      lineHeight: 1.55
+    }
+  }, "\uD83D\uDCCB ", /*#__PURE__*/React.createElement("b", null, "\u600E\u4E48\u73A9\uFF1A"), howTo));
 }
 function Setup({
   playerCount,
@@ -3849,24 +5085,37 @@ function Setup({
   const goodCount = comp.filter(r => ROLE_DEFS[r].side === "good").length;
   const evilCount = comp.filter(r => ROLE_DEFS[r].side === "evil").length;
   const evilRoles = comp.filter(r => ROLE_DEFS[r].side === "evil");
+
+  // 🔧 所有 useState 必须放在前面，不能在 useEffect 后面声明（会破坏 React Hooks 规则）
   const [showApi, setShowApi] = useState(false);
   const [showSaves, setShowSaves] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
-  const [providerLocal, setProviderLocal] = useState(getProvider());
-  const [apiInput, setApiInput] = useState(getKeyFor(getProvider()));
+  const [providerLocal, setProviderLocal] = useState(() => {
+    // 🔒 双重保险：确保初始值一定在 PROVIDERS 里
+    const p = getProvider();
+    return PROVIDERS[p] ? p : "deepseek";
+  });
+  const [apiInput, setApiInput] = useState(() => getKeyFor(getProvider()));
   const [showKey, setShowKey] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(null); // 存档丢弃确认弹窗
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [apiTesting, setApiTesting] = useState(false);
+  const [apiResult, setApiResult] = useState(null);
+  const [dsModelLocal, setDsModelLocal] = useState(getDSModel());
+  const [preflightChecking, setPreflightChecking] = useState(false);
+  const [preflightError, setPreflightError] = useState(null);
+
+  // 🔒 渲染保险：如果 providerLocal 不知怎么变成 undefined，回退到 deepseek
+  const safeProviderLocal = PROVIDERS[providerLocal] ? providerLocal : "deepseek";
+  const currentProvider = PROVIDERS[safeProviderLocal];
 
   // 切换 provider 时刷新 input
   function switchProvider(p) {
     setProvider(p);
     setProviderLocal(p);
     setApiInput(getKeyFor(p));
-    // 切换 provider 时重置当前模型为该 provider 的默认
     setDSModel(PROVIDERS[p].models[0].id);
     setDsModelLocal(PROVIDERS[p].models[0].id);
     setApiResult(null);
-    // useAPI 状态根据当前 provider 是否有 key 决定
     setUseAPI(!!getKeyFor(p));
   }
 
@@ -3876,12 +5125,6 @@ function Setup({
       setAssistMode("self");
     }
   }, [useAPI]);
-  const [apiTesting, setApiTesting] = useState(false);
-  const [apiResult, setApiResult] = useState(null);
-  const [dsModelLocal, setDsModelLocal] = useState(getDSModel());
-  const [preflightChecking, setPreflightChecking] = useState(false);
-  const [preflightError, setPreflightError] = useState(null); // {provider, msg}
-
   async function testKey() {
     if (!apiInput.trim()) return;
     setApiTesting(true);
@@ -3942,7 +5185,19 @@ function Setup({
     style: {
       position: "relative"
     }
-  }, /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("aside", {
+    className: "story-side story-side-left hidden lg:block"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "story-side-deco"
+  }, "\u269C"), /*#__PURE__*/React.createElement("div", {
+    className: "story-side-title"
+  }, "\u8FF7\u96FE\u5F7C\u5CB8"), /*#__PURE__*/React.createElement("p", null, "\u5251\u680F\u8840\u6218\u4E4B\u591C\u2014\u2014", /*#__PURE__*/React.createElement("strong", null, "\u4E9A\u745F\u738B"), "\u7684\u957F\u77DB\u523A\u7A7F\u4E86", /*#__PURE__*/React.createElement("em", null, "\u83AB\u5FB7\u96F7\u5FB7"), "\u7684\u76FE\u724C\uFF0C\u800C\u90A3\u53DB\u5B50\u536F\u8DB3\u5168\u529B\uFF0C\u53CC\u624B\u63E1\u5251\u524A\u53BB\u4E86\u738B\u8005\u534A\u4E2A\u5934\u76D4\u3002"), /*#__PURE__*/React.createElement("p", null, "\u4E16\u754C\u672C\u5E94\u4E8E\u6B64\u6C89\u5BC2\u3002\u53EF", /*#__PURE__*/React.createElement("strong", null, "\u6885\u6797"), "\u4E0E", /*#__PURE__*/React.createElement("strong", null, "\u6D3E\u897F\u7EF4\u5C14"), "\u4E0D\u613F\u653E\u5F03\u2014\u2014\u4ED6\u4EEC\u6276\u8D77\u5944\u5944\u4E00\u606F\u7684\u738B\u8005\uFF0C\u767B\u4E0A\u4E00\u53F6\u5C0F\u821F\uFF0C\u9A76\u5411\u8FF7\u96FE\u6DF1\u5904\u7684\u5723\u5C9B", /*#__PURE__*/React.createElement("strong", null, "\u963F\u74E6\u9686"), "\u3002"), /*#__PURE__*/React.createElement("p", null, "\u8FD9\u662F\u4E9A\u745F\u4F20\u8BF4\u4E2D\u7684", /*#__PURE__*/React.createElement("em", null, "\u5A01\u5C14\u58EB\u6781\u4E50\u4E16\u754C"), "\uFF0C\u7531\u7CBE\u7075\u5B88\u62A4\uFF0C\u6CA1\u6709\u65F6\u95F4\uFF0C\u6CA1\u6709\u5C81\u6708\u3002\u5723\u676F\u4E4B\u6C34\uFF0C\u53EF\u8BA9\u738B\u8D77\u6B7B\u56DE\u751F\u3002"), /*#__PURE__*/React.createElement("p", null, "\u53EF\u8FD9\u8258\u8239\u4E0A\u2026\u2026\u5E76\u975E\u6240\u6709\u4EBA\u90FD\u5E0C\u671B\u738B\u8005\u590D\u6D3B\u3002")), /*#__PURE__*/React.createElement("aside", {
+    className: "story-side story-side-right hidden lg:block"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "story-side-deco"
+  }, "\uD83D\uDDE1"), /*#__PURE__*/React.createElement("div", {
+    className: "story-side-title"
+  }, "\u80CC\u53DB\u8005\u4E4B\u540D"), /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("strong", null, "\u83AB\u7518\u5A1C"), "\u2014\u2014\u4E9A\u745F\u738B\u540C\u6BCD\u5F02\u7236\u7684\u59D0\u59D0\uFF0C\u66FE\u4EE5\u8FF7\u836F\u4E0E\u738B\u5171\u5EA6\u7981\u5FCC\u4E4B\u591C\uFF0C\u5B55\u4E0B\u83AB\u5FB7\u96F7\u5FB7\u3002\u5979\u7709\u5B87\u95F4\u6DE1\u6DE1\u7684\u5FE7\u4F24\u63A9\u7740\u5343\u5E74\u6068\u610F\u3002"), /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("strong", null, "\u83AB\u5FB7\u96F7\u5FB7"), "\u2014\u2014\u738B\u8005\u4E0E\u83AB\u7518\u5A1C\u4E4B\u5B50\uFF0C\u88AB\u7236\u4EB2\u4E0B\u4EE4\u653E\u9010\u7684\u5A74\u5B69\u3002\u5251\u680F\u4E4B\u4E0A\u4ED6\u51E0\u4E4E\u780D\u4E0B\u738B\u8005\u5934\u9885\uFF0C\u5982\u4ECA\u4ED6\u8981\u770B\u7740\u5723\u676F\u6C38\u8FDC\u5230\u4E0D\u4E86\u738B\u8005\u5507\u8FB9\u3002"), /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("strong", null, "\u5965\u4F2F\u4F26"), "\u2014\u2014\u7CBE\u7075\u738B\uFF0C\u53D7\u6E56\u4E2D\u5973\u4ED9\u8587\u8587\u5B89\u59D4\u6258\u6DF7\u5165\u62A4\u536B\u961F\u3002\u4ED6\u4E0D\u662F\u4EBA\u7C7B\uFF0C\u626D\u66F2\u7684\u7075\u9B42\u53EA\u4E3A\u963B\u6B62\u4E9A\u745F\u590D\u6D3B\u3002"), /*#__PURE__*/React.createElement("p", null, "\u4ED6\u4EEC\u4E0E\u6697\u5F71\u9A91\u58EB\u56E2\u6DF7\u5165\u4E86\u62A4\u536B\u961F\uFF0C\u8981\u5728\u5C0F\u821F\u9760\u5CB8\u4E4B\u524D\u2014\u2014", /*#__PURE__*/React.createElement("em", null, "\u523A\u6B7B\u90A3\u4F4D\u77E5\u6653\u5723\u676F\u79D8\u5BC6\u7684\u4EBA\u2014\u2014\u6885\u6797"), "\u3002")), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowTutorial(!showTutorial),
     className: "tutorial-btn-fixed",
     style: {
@@ -4178,18 +5433,18 @@ function Setup({
       color: "#e6b450",
       lineHeight: 1.6
     }
-  }, "\u2139\uFE0F \u4F60\u5DF2\u7ECF\u586B\u8FC7\u591A\u5BB6 Key\uFF0C", /*#__PURE__*/React.createElement("b", null, "\u5F53\u524D\u53EA\u7528 ", PROVIDERS[providerLocal].label), "\u3002\u5176\u4ED6\u5BB6 Key \u4FDD\u7559\u7740\u4F46\u4E0D\u6FC0\u6D3B\u3002"), /*#__PURE__*/React.createElement("div", {
+  }, "\u2139\uFE0F \u4F60\u5DF2\u7ECF\u586B\u8FC7\u591A\u5BB6 Key\uFF0C", /*#__PURE__*/React.createElement("b", null, "\u5F53\u524D\u53EA\u7528 ", currentProvider.label), "\u3002\u5176\u4ED6\u5BB6 Key \u4FDD\u7559\u7740\u4F46\u4E0D\u6FC0\u6D3B\u3002"), /*#__PURE__*/React.createElement("div", {
     className: "text-xs uppercase mb-2",
     style: {
       color: "#d8843c",
       letterSpacing: "0.2em"
     }
-  }, PROVIDERS[providerLocal].label, " API Key"), /*#__PURE__*/React.createElement("div", {
+  }, currentProvider.label, " API Key"), /*#__PURE__*/React.createElement("div", {
     className: "text-xs mb-3",
     style: {
       color: "#a8a058"
     }
-  }, "\u586B\u4E86 Key \u2192 AI \u73A9\u5BB6\u7531 ", PROVIDERS[providerLocal].label, " \u9A71\u52A8\uFF0C\u53D1\u8A00\u63A8\u7406\u50CF\u771F\u4EBA", /*#__PURE__*/React.createElement("br", null), "\u6CA1\u586B \u2192 \u7528\u672C\u5730\u9884\u8BBE\u53F0\u8BCD\uFF0C\u4E5F\u80FD\u6B63\u5E38\u73A9"), providerLocal === "deepseek" && /*#__PURE__*/React.createElement("details", {
+  }, "\u586B\u4E86 Key \u2192 AI \u73A9\u5BB6\u7531 ", currentProvider.label, " \u9A71\u52A8\uFF0C\u53D1\u8A00\u63A8\u7406\u50CF\u771F\u4EBA", /*#__PURE__*/React.createElement("br", null), "\u6CA1\u586B \u2192 \u7528\u672C\u5730\u9884\u8BBE\u53F0\u8BCD\uFF0C\u4E5F\u80FD\u6B63\u5E38\u73A9"), providerLocal === "deepseek" && /*#__PURE__*/React.createElement("details", {
     style: {
       marginBottom: 12,
       padding: "8px 10px",
@@ -4547,7 +5802,7 @@ function Setup({
     type: showKey ? "text" : "password",
     value: apiInput,
     onChange: e => setApiInput(e.target.value),
-    placeholder: PROVIDERS[providerLocal].keyHint,
+    placeholder: currentProvider.keyHint,
     className: "w-full outline-none p-2.5 pr-10 text-sm rounded",
     style: {
       background: "rgba(26,14,26,0.6)",
@@ -4621,7 +5876,7 @@ function Setup({
     type: "checkbox",
     checked: useAPI,
     onChange: e => setUseAPI(e.target.checked)
-  }), "\u672C\u5C40\u4F7F\u7528 ", PROVIDERS[providerLocal].label, "\uFF08\u4E0D\u52FE\u9009\u5219\u7528\u672C\u5730\u9884\u8BBE\uFF09")), getDSKey() && useAPI && /*#__PURE__*/React.createElement("div", {
+  }), "\u672C\u5C40\u4F7F\u7528 ", currentProvider.label, "\uFF08\u4E0D\u52FE\u9009\u5219\u7528\u672C\u5730\u9884\u8BBE\uFF09")), getDSKey() && useAPI && /*#__PURE__*/React.createElement("div", {
     className: "mt-3 pt-3",
     style: {
       borderTop: "1px solid rgba(90,72,56,0.5)"
@@ -4635,9 +5890,9 @@ function Setup({
   }, "\u6A21\u578B\u9009\u62E9"), /*#__PURE__*/React.createElement("div", {
     className: "grid gap-2",
     style: {
-      gridTemplateColumns: PROVIDERS[providerLocal].models.length <= 2 ? "1fr 1fr" : "1fr 1fr 1fr"
+      gridTemplateColumns: currentProvider.models.length <= 2 ? "1fr 1fr" : "1fr 1fr 1fr"
     }
-  }, PROVIDERS[providerLocal].models.map(m => /*#__PURE__*/React.createElement("button", {
+  }, currentProvider.models.map(m => /*#__PURE__*/React.createElement("button", {
     key: m.id,
     onClick: () => {
       setDSModel(m.id);
@@ -5411,21 +6666,38 @@ function recordSubround(g, type, payload) {
 }
 
 // 打字机效果工具：把一段文本逐字加到 history 最后一项
-async function typeWriter(setGame, fullText, speedMs = 35) {
+async function typeWriter(setGame, fullText, speedMs = 35, entryId = null) {
   const chars = [...fullText];
   for (let i = 1; i <= chars.length; i++) {
     setGame(prev => {
       const ng = {
         ...prev
       };
-      const last = ng.history[ng.history.length - 1];
-      if (last && last.typing) {
+      // 🔒 找到目标条目——优先按 entryId，否则取最后一个 typing
+      let targetIdx = -1;
+      if (entryId !== null) {
+        targetIdx = ng.history.findIndex(h => h._typeId === entryId);
+      }
+      if (targetIdx < 0) {
+        // fallback：找最后一个 typing 条目
+        for (let j = ng.history.length - 1; j >= 0; j--) {
+          if (ng.history[j].typing) {
+            targetIdx = j;
+            break;
+          }
+        }
+      }
+      if (targetIdx >= 0) {
+        const last = {
+          ...ng.history[targetIdx]
+        };
         last.text = chars.slice(0, i).join("");
         if (i === chars.length) {
           last.typing = false;
-          last._complete = true; // 完整打完才标记
+          last._complete = true;
         }
-        ng.history = [...ng.history.slice(0, -1), last];
+        ng.history = [...ng.history];
+        ng.history[targetIdx] = last;
       }
       return ng;
     });
@@ -5440,7 +6712,16 @@ function Play({
 }) {
   const [pendingTeam, setPendingTeam] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [speech, setSpeech] = useState("");
+  const [speech, setSpeechRaw] = useState(game?.draftSpeech || "");
+  // 🆕 包装 setSpeech：每次更新都同步到 game.draftSpeech，退出回来不丢
+  const setSpeech = val => {
+    const newVal = typeof val === "function" ? val(speech) : val;
+    setSpeechRaw(newVal);
+    setGame(prev => prev ? {
+      ...prev,
+      draftSpeech: newVal
+    } : prev);
+  };
   const [adviceText, setAdviceText] = useState("");
   const [showMissionDetail, setShowMissionDetail] = useState(null); // round index
   const [mobileTab, setMobileTab] = useState("scene"); // 手机端：scene 实录 | table 圆桌
@@ -5449,9 +6730,13 @@ function Play({
   const logRef = useRef(null);
   const phaseRunLock = useRef({}); // 运行锁：防止同一 phase 在异步未完成时被重复调用
 
-  // 监听 AI 调用失败
+  // 监听 AI 调用失败（只提示一次，避免重复打扰）
+  const apiWarningShownRef = useRef(false);
   useEffect(() => {
     setApiFailCallback(errMsg => {
+      // 已经提示过就不再提示
+      if (apiWarningShownRef.current) return;
+      apiWarningShownRef.current = true;
       // 解析错误信息给用户友好提示
       let friendly = "AI 接入失败";
       if (errMsg.includes("401") || errMsg.includes("403")) friendly = "API Key 无效或权限不足";else if (errMsg.includes("429")) friendly = "API 调用次数超限或欠费";else if (errMsg.includes("404") || errMsg.includes("model")) friendly = "当前模型不存在或不可用";else if (errMsg.includes("timeout") || errMsg.includes("network") || errMsg.includes("Failed")) friendly = "网络问题，无法连接 API";else friendly = `AI 调用失败：${errMsg.slice(0, 60)}`;
@@ -5576,7 +6861,8 @@ function Play({
     g.history = [...g.history, {
       tag: "队长开场",
       text: placeholderText,
-      typing: true
+      typing: true,
+      speakerId: leader.id
     }];
     g.currentSpeakerId = leader.id;
     setGame(g);
@@ -5624,7 +6910,8 @@ function Play({
     g.history = [...g.history, {
       tag: "队长总结",
       text: "",
-      typing: true
+      typing: true,
+      speakerId: leader.id
     }];
     g.currentSpeakerId = leader.id;
     setGame(g);
@@ -5657,6 +6944,8 @@ function Play({
     // 🔒 运行锁：防止同一时刻多次进入 runDiscussion 导致重复发言
     const lockKey = `discuss-r${game.round}-v${game.voteRound}`;
     if (phaseRunLock.current[lockKey]) return;
+    // 🔒 二次确认：phase 必须仍是 discuss
+    if (game.phase !== "discuss") return;
     phaseRunLock.current[lockKey] = true;
     setBusy(true);
     const startId = (game.leaderId + (game.speakDirection === "cw" ? 1 : -1) + game.playerCount) % game.playerCount;
@@ -5725,15 +7014,17 @@ function Play({
           ...g,
           currentSpeakerId: id
         };
+        const typeId = `t${Date.now()}-${id}-${Math.random().toString(36).slice(2, 7)}`;
         g.history = [...g.history, {
           tag: sp.seatLabel,
           text: "",
-          typing: true
+          typing: true,
+          _typeId: typeId
         }];
         setGame(g);
         await sleep(350);
         const r = await aiSpeak(sp, g, "discuss", useAPI);
-        await typeWriter(setGame, r.text, 70);
+        await typeWriter(setGame, r.text, 70, typeId);
         setGame(prev => ({
           ...prev,
           currentSpeakerId: null,
@@ -5766,7 +7057,57 @@ function Play({
       setBusy(false);
     }
   }
+
+  // 🆕 内容审核：检测骂人/无关话
+  function checkSpeechContent(text) {
+    const t = text.trim();
+    if (!t) return {
+      ok: true
+    };
+
+    // 严重违规：骂人/攻击性词汇/侮辱/生殖器官/低俗 → 终止游戏
+    const profanity = /(操你|操他|操妈|操爹|操尼|操恁|草你|草他|草泥马|草你妈|草尼马|草拟马|妈的|他妈|你妈|妈逼|妈批|妈了个|妈卖批|尼玛|尼妈|你麻痹|你瞎|傻逼|傻屄|傻逼玩意|傻B|傻x|傻吊|二逼|二B|逼养|逼操|逼样|逼脸|垃圾|废物|废柴|滚蛋|滚开|滚远|去死|该死|去你|脑残|脑瘫|脑抽|低能|智障|弱智|残废|傻子|蠢货|蠢驴|猪脑|猪头|猪狗|笨蛋|沙比|杀比|杀逼|sb|nt|nmsl|cnm|cao|nmb|tmd|wcnm|wsnd|fuck|fucking|fucker|fucked|fk|fck|shit|bullshit|bitch|asshole|asshat|cunt|bastard|dick|dickhead|pussy|motherfucker|cocksucker|wanker|twat|prick|jerk|jackass|dumbass|smartass|dumb|畜生|畜牲|王八|王八蛋|龟孙|龟儿|龟孙子|贱人|贱货|贱东西|贱嘴|婊子|婊养|妓|嫖|强奸|奸淫|乱伦|轮奸|阴茎|鸡巴|鸡儿|鸡鸡|阳具|屌|屌丝|屄|逼毛|阴道|阴部|阴户|阴蒂|阴毛|阴囊|肏|肏你|淫|淫秽|淫乱|淫荡|发骚|骚货|骚逼|骚比|骚B|骚浪|下贱|贱货|傻屌|大屌|小屌|jb|jj|bb|cb|肉棒|肉茎|肉穴|龟头|睾丸|蛋蛋|sao|cock|penis|vagina|tit|tits|boob|boobs|nipple|porn|porno|nude|naked|sex|sexy|sexual|orgasm|cum|jizz|hentai|奶子|波波|奶头|乳头|乳房|爆乳|高潮|做爱|约炮|开车|车震|插你|插死|强上|啪啪|啪啪啪|gangbang|fap|nutsack|whore|slut|hoe|thot|gay|faggot|fag|nigger|nigga|chink|jap|kike|spic|retard|retarded|tard|moron|imbecile|stfu|gtfo|kys|kms|piss off|wtf)/i;
+    if (profanity.test(t)) {
+      return {
+        ok: false,
+        severity: "fatal",
+        reason: "检测到攻击性/侮辱性/低俗词汇"
+      };
+    }
+
+    // 轻度违规：和游戏完全无关的内容 → 警告
+    const gameKeywords = /(\d号|队长|队伍|车|带|上车|发车|失败|成功|过|否决|流局|反对|支持|赞成|跟|信|怀疑|可疑|嫌疑|红|蓝|好人|坏人|梅林|刺客|莫甘娜|莫德雷德|奥伯伦|派西|忠臣|爪牙|任务|轮|视野|bom|投|票|这把|这局|我们|你们|他|她|发言|沉默|表态|看|想|认为|觉得|分析|推理|逻辑|判断|阿瓦隆|圣杯|亚瑟|圆桌|骑士|王国)/;
+    if (t.length > 15 && !gameKeywords.test(t)) {
+      return {
+        ok: false,
+        severity: "warn",
+        reason: "发言内容似乎和游戏无关——请围绕游戏推理发言"
+      };
+    }
+    return {
+      ok: true
+    };
+  }
   async function submitSpeech(text) {
+    // 🆕 先审核内容
+    const check = checkSpeechContent(text);
+    if (check.severity === "fatal") {
+      // 终止游戏 + 警告
+      alert(`⚠️ 警告：${check.reason}\n\n游戏已终止。请保持友善文明。\n\n本局战绩不会保存。`);
+      // 清掉这局所有记录
+      try {
+        deleteSave(game.createdAt);
+      } catch {}
+      // 回到主菜单
+      setGame(null);
+      setWinner(null);
+      setStage("setup");
+      return;
+    }
+    if (check.severity === "warn") {
+      const ok = window.confirm(`💬 提示：${check.reason}\n\n如果你确实想这么发，点"确定"继续；否则点"取消"重写。`);
+      if (!ok) return;
+    }
     let g = {
       ...game
     };
@@ -5830,15 +7171,17 @@ function Play({
           ...g,
           currentSpeakerId: sp.id
         };
+        const typeId = `t${Date.now()}-${sp.id}-${Math.random().toString(36).slice(2, 7)}`;
         g.history = [...g.history, {
           tag: sp.seatLabel,
           text: "",
-          typing: true
+          typing: true,
+          _typeId: typeId
         }];
         setGame(g);
         await sleep(350);
         const r = await aiSpeak(sp, g, "discuss", useAPI);
-        await typeWriter(setGame, r.text, 70);
+        await typeWriter(setGame, r.text, 70, typeId);
         setGame(prev => ({
           ...prev,
           currentSpeakerId: null,
@@ -6043,7 +7386,8 @@ function Play({
     g.missionResults.push({
       success: !failed,
       fails,
-      team: [...team]
+      team: [...team],
+      leaderId: g.leaderId
     });
     g.history = [...g.history, {
       tag: "任务",
@@ -6061,6 +7405,37 @@ function Play({
       fails,
       success: !failed
     });
+
+    // 🆕 #109 任务结果出来后让 1-2 个 AI 简短反应（不 cue 真人，简短台词）
+    setGame({
+      ...g
+    });
+    await sleep(800);
+    const reactCount = failed ? 2 : 1; // 失败时多反应一句，成功时反应一句
+    const reactCandidates = g.players.filter(p => !p.isHuman).map(p => p.id);
+    // 随机选反应者
+    const reactors = [];
+    while (reactors.length < reactCount && reactCandidates.length > 0) {
+      const idx = Math.floor(Math.random() * reactCandidates.length);
+      reactors.push(reactCandidates[idx]);
+      reactCandidates.splice(idx, 1);
+    }
+    const failReactions = ["卧槽……这都失败了？", "诶？又翻车了", "我去，谁干的？", "这队也能 bom 我服了", "失败了，得查查谁干的", "果然……我说什么来着", "这就 bom 了？", "无奈了，红方真会装"];
+    const successReactions = ["好，过了一轮", "稳，下一把继续", "终于成了", "这队没问题，省心", "顺利，下一轮", "嗯，干净"];
+    const pool = failed ? failReactions : successReactions;
+    for (const reactorId of reactors) {
+      const reactor = g.players[reactorId];
+      const text = pool[Math.floor(Math.random() * pool.length)];
+      g.history = [...g.history, {
+        tag: reactor.seatLabel,
+        text,
+        _complete: true
+      }];
+      setGame({
+        ...g
+      });
+      await sleep(900);
+    }
     g.round += 1;
     g.voteRound = 0;
     g.leaderId = (g.leaderId + 1) % g.playerCount;
@@ -6107,13 +7482,32 @@ function Play({
     setBusy(true);
     const ass = game.players.find(p => p.role === "Assassin");
     const humanPlayer = game.players.find(p => p.isHuman);
-    // 所有红方参与（含奥伯伦），刺客最后发言
-    const evilPlayers = game.players.filter(p => ROLE_DEFS[p.role].side === "evil");
-    const evilDiscussers = evilPlayers.filter(p => p.role !== "Assassin"); // 非刺客红方（讨论方）
-
+    const N = game.playerCount;
+    // 所有红方参与（含刺客自己 + 奥伯伦）
+    const allEvil = game.players.filter(p => ROLE_DEFS[p.role].side === "evil");
     let g = {
       ...game
     };
+
+    // 第一次进入时初始化：随机选一个红方作为起点，然后按座位顺时针轮转
+    let evilOrder = g.assassinDiscussionOrder;
+    if (!evilOrder) {
+      const startEvil = allEvil[Math.floor(Math.random() * allEvil.length)];
+      // 顺时针：从 startEvil 开始，按 (id + 1) % N 找到下一个红方
+      const ordered = [];
+      let curId = startEvil.id;
+      for (let i = 0; i < N && ordered.length < allEvil.length; i++) {
+        const p = g.players[curId];
+        if (ROLE_DEFS[p.role].side === "evil") ordered.push(p.id);
+        curId = (curId + 1) % N;
+      }
+      // 万一上面循环漏了，补全
+      allEvil.forEach(p => {
+        if (!ordered.includes(p.id)) ordered.push(p.id);
+      });
+      evilOrder = ordered;
+    }
+    const evilPlayers = evilOrder.map(id => g.players[id]); // 已按讨论顺序排好
 
     // 第一次进入时初始化
     if (!g.assassinDiscussion) {
@@ -6121,10 +7515,10 @@ function Play({
         ...g
       };
       g.assassinDiscussion = [];
+      g.assassinDiscussionOrder = evilOrder; // 保存讨论顺序
 
-      // 公开揭示：分多条更有节奏感
-      const allEvil = g.players.filter(p => ROLE_DEFS[p.role].side === "evil");
       const evilLabels = allEvil.map(p => p.seatLabel).join("、");
+      const orderLabels = evilPlayers.map(p => p.seatLabel).join(" → ");
       g.history = [...g.history, {
         tag: "刺杀",
         text: "🗡 蓝方达成 3 胜，进入终局刺杀环节"
@@ -6145,8 +7539,10 @@ function Play({
       };
       g.history = [...g.history, {
         tag: "揭示",
-        text: `🗡 刺客是【${ass.seatLabel}】，其他红方角色暂不公开`
+        text: `🗡 刺客是【${ass.seatLabel}】`
       }];
+      // 标记刺客身份公开（用于 UI 显示）
+      g.assassinRevealed = true;
       setGame(g);
       await sleep(1800);
       g = {
@@ -6154,14 +7550,14 @@ function Play({
       };
       g.history = [...g.history, {
         tag: "刺杀",
-        text: "💬 全部红方公开商议谁是梅林，刺客最后决定"
+        text: `💬 红方按以下顺序讨论 2 轮：${orderLabels}`
       }];
       setGame(g);
-      await sleep(1200);
+      await sleep(1300);
     }
 
     // 收人类刚刚提交的发言
-    if (humanInputText && humanPlayer && evilDiscussers.some(p => p.id === humanPlayer.id)) {
+    if (humanInputText && humanPlayer && evilPlayers.some(p => p.id === humanPlayer.id) && humanPlayer.role !== "Assassin") {
       g = {
         ...g
       };
@@ -6177,13 +7573,53 @@ function Play({
       await sleep(800);
     }
 
-    // 按顺序遍历所有非刺客红方，未发言的依次发言
-    const alreadySpoken = new Set((g.assassinDiscussion || []).map(d => d.speakerId));
-    for (const speaker of evilDiscussers) {
-      if (alreadySpoken.has(speaker.id)) continue;
+    // 固定 2 轮讨论：按 evilPlayers 顺序，每人最多发 MAX_ROUNDS 次
+    const MAX_ROUNDS = 2;
+    while (true) {
+      const speechCountByPlayer = {};
+      (g.assassinDiscussion || []).forEach(d => {
+        speechCountByPlayer[d.speakerId] = (speechCountByPlayer[d.speakerId] || 0) + 1;
+      });
 
-      // 人类红方：暂停等输入
-      if (speaker.isHuman) {
+      // 按讨论顺序找下一个该发言的人
+      let nextSpeaker = null;
+      // 第 1 轮：每个人都没发够 1 次的依次发
+      for (const speaker of evilPlayers) {
+        const count = speechCountByPlayer[speaker.id] || 0;
+        if (count < 1) {
+          nextSpeaker = speaker;
+          break;
+        }
+      }
+      // 第 1 轮都发完了 → 第 2 轮：按顺序再来一遍
+      if (!nextSpeaker) {
+        for (const speaker of evilPlayers) {
+          const count = speechCountByPlayer[speaker.id] || 0;
+          if (count < MAX_ROUNDS) {
+            nextSpeaker = speaker;
+            break;
+          }
+        }
+      }
+      if (!nextSpeaker) break; // 2 轮都发完了
+
+      // 检查这是不是讨论的最后一次发言（其他人都发完 2 次了）
+      const allOthersDone = evilPlayers.filter(p => p.id !== nextSpeaker.id).every(p => (speechCountByPlayer[p.id] || 0) >= MAX_ROUNDS);
+      const isThisAssassinsLastTurn = nextSpeaker.role === "Assassin" && allOthersDone;
+
+      // 人类发言：分两种情况
+      if (nextSpeaker.isHuman) {
+        // 如果是人类刺客 + 这是最后一次发言 → 直接进入手动选目标（玩家在 UI 里写完发言+选目标）
+        if (isThisAssassinsLastTurn && game.assistMode !== "auto") {
+          g = {
+            ...g
+          };
+          g.phase = "humanAssassinate";
+          setGame(g);
+          setBusy(false);
+          return;
+        }
+        // 普通红方人类发言（或刺客中间轮发言）
         g = {
           ...g
         };
@@ -6193,45 +7629,65 @@ function Play({
         return;
       }
 
-      // AI 红方发言
-      const speech = await aiEvilDiscussion(speaker, g);
+      // AI 发言（含刺客的中间轮发言）
+      const speech = await aiEvilDiscussion(nextSpeaker, g);
       g = {
         ...g
       };
       g.assassinDiscussion = [...(g.assassinDiscussion || []), {
-        speakerId: speaker.id,
+        speakerId: nextSpeaker.id,
         text: speech
       }];
-      g.history = [...g.history, {
-        tag: speaker.seatLabel,
-        text: `（红方）${speech}`
-      }];
+      // 如果是 AI 刺客的最后一次发言（顺序刚好是最后），让 ta 在这次发言里宣布目标
+      if (isThisAssassinsLastTurn) {
+        g.history = [...g.history, {
+          tag: nextSpeaker.seatLabel,
+          text: `（刺客）${speech}`
+        }];
+        setGame(g);
+        await sleep(1500);
+        // 直接执行刺杀
+        let target;
+        if (game.useAPI && getDSKey()) {
+          target = await aiAssassinateViaAPI(g);
+        } else {
+          target = aiAssassinate(ass, g);
+        }
+        await performAssassination(g, target, ass);
+        return;
+      } else {
+        g.history = [...g.history, {
+          tag: nextSpeaker.seatLabel,
+          text: `（${nextSpeaker.role === "Assassin" ? "刺客" : "红方"}）${speech}`
+        }];
+      }
       setGame(g);
       await sleep(1500);
     }
 
-    // 刺客最后发言：如果刺客是人类且不是 auto 模式，进入手动选目标阶段
+    // 2 轮讨论完毕（且刺客不是最后一个发言的）——刺客做最终发言
     if (ass.isHuman && game.assistMode !== "auto") {
+      // 人类刺客
       g = {
         ...g
       };
       g.phase = "humanAssassinate";
       g.history = [...g.history, {
         tag: ass.seatLabel,
-        text: "（刺客·你）现在轮到你做最后判断..."
+        text: "（刺客·你）2 轮讨论完了，现在做最后宣布..."
       }];
       setGame(g);
       setBusy(false);
       return;
     }
 
-    // AI 刺客（或人类 auto 模式）发言
+    // AI 刺客追加最终发言
     g = {
       ...g
     };
     g.history = [...g.history, {
       tag: ass.seatLabel,
-      text: "（刺客）我听到大家的意见了，让我做最后判断..."
+      text: "（刺客）听完大家了，我决定..."
     }];
     setGame(g);
     await sleep(1500);
@@ -6252,19 +7708,19 @@ function Play({
     const targetPlayer = g.players[targetId];
     const isMerlin = targetPlayer.role === "Merlin";
 
-    // 触发刺杀特效
+    // 阶段 1：宣布刺杀目标号 —— 让玩家看清楚刺谁
     g.assassinationFx = {
       targetId,
       phase: "swing"
-    }; // swing = 出刀动画
+    };
     g.history = [...g.history, {
       tag: "刺杀",
-      text: `🗡 ${ass.seatLabel} 拔剑指向 ${targetPlayer.seatLabel}…`
+      text: `🗡 ${ass.seatLabel}（刺客）决定刺杀 ${targetPlayer.seatLabel}`
     }];
     setGame(g);
-    await sleep(2000);
+    await sleep(2500); // 🆕 加长 2.5 秒——让玩家看清楚是几号
 
-    // 揭示角色
+    // 阶段 2：揭示目标的真实身份
     g = {
       ...g
     };
@@ -6275,12 +7731,12 @@ function Play({
     };
     g.history = [...g.history, {
       tag: "揭示",
-      text: `✨ ${targetPlayer.seatLabel} 的身份揭晓 —— 【${ROLE_DEFS[targetPlayer.role].label}】（${ROLE_DEFS[targetPlayer.role].side === "good" ? "蓝方" : "红方"}）`
+      text: `✨ ${targetPlayer.seatLabel} 的真实身份是【${ROLE_DEFS[targetPlayer.role].label}】（${ROLE_DEFS[targetPlayer.role].side === "good" ? "蓝方" : "红方"}）`
     }];
     setGame(g);
-    await sleep(2800);
+    await sleep(2800); // 揭示身份后停 2.8 秒看清楚
 
-    // 给出胜负结论
+    // 阶段 3：宣布最终结果
     g = {
       ...g
     };
@@ -6294,7 +7750,7 @@ function Play({
       text: isMerlin ? `💀 刺中梅林！红方反败为胜！` : `🛡️ 刺错了！蓝方守住了王国！`
     }];
     setGame(g);
-    await sleep(2200);
+    await sleep(2500);
     setBusy(false);
     onEnd(isMerlin ? "evil" : "good");
   }
@@ -6343,7 +7799,8 @@ function Play({
     g.history = [...g.history, {
       tag: "队长开场",
       text: "",
-      typing: true
+      typing: true,
+      speakerId: human.id
     }];
     g.currentSpeakerId = human.id;
     setGame(g);
@@ -6370,7 +7827,8 @@ function Play({
     g.history = [...g.history, {
       tag: "队长总结",
       text: "",
-      typing: true
+      typing: true,
+      speakerId: human.id
     }];
     g.currentSpeakerId = human.id;
     setGame(g);
@@ -6476,7 +7934,8 @@ function Play({
     };
     g.history = [...g.history, {
       tag: "队长开场",
-      text: text.trim() || "（无开场）"
+      text: text.trim() || "（无开场）",
+      speakerId: human.id
     }];
     g.phase = "discuss";
     setGame(g);
@@ -6488,7 +7947,8 @@ function Play({
     };
     g.history = [...g.history, {
       tag: "队长总结",
-      text: text.trim() || "（无总结）"
+      text: text.trim() || "（无总结）",
+      speakerId: human.id
     }];
     g.phase = "revise";
     setGame(g);
@@ -6649,7 +8109,11 @@ function Play({
       fontSize: 10,
       letterSpacing: "0.3em"
     }
-  }, "Avalon \xB7 ", game.playerCount, " \u4EBA \xB7 ", game.assistMode === "auto" ? "AI代理" : game.assistMode === "advice" ? "建议模式" : "自己玩", " ", useAPI && "· DeepSeek"), /*#__PURE__*/React.createElement("div", {
+  }, "Avalon \xB7 ", game.playerCount, " \u4EBA \xB7 ", game.assistMode === "auto" ? "AI代理" : game.assistMode === "advice" ? "建议模式" : "自己玩", " ", useAPI ? `· ${PROVIDERS[getProvider()]?.label || "AI"}已启用` : /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#a88858"
+    }
+  }, "\xB7 \u672A\u63A5\u5165AI\uFF08\u7528\u9884\u8BBE\uFF09")), /*#__PURE__*/React.createElement("div", {
     className: "top-bar-title text-lg font-display",
     style: {
       color: "#f0e3c2"
@@ -6834,8 +8298,24 @@ function ThinkingPanel({
 }) {
   const log = game.thinkingLog || [];
   const ref = useRef(null);
+  // 🆕 智能滚动：用户在底部 80px 内才自动跟新；用户向上翻就不打扰
+  const isAtBottomRef = useRef(true);
+  const [showBackToBottom, setShowBackToBottom] = useState(false);
+
+  // 监听滚动判断是否在底部
+  const handleScroll = () => {
+    if (!ref.current) return;
+    const el = ref.current;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distanceFromBottom < 80;
+    isAtBottomRef.current = atBottom;
+    setShowBackToBottom(!atBottom && el.scrollHeight > el.clientHeight + 50);
+  };
   useEffect(() => {
-    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+    // 仅当用户在底部时才自动滚动
+    if (ref.current && isAtBottomRef.current) {
+      ref.current.scrollTop = ref.current.scrollHeight;
+    }
   }, [log.length]);
   return /*#__PURE__*/React.createElement("div", {
     className: "rounded-lg border flex-shrink-0",
@@ -6844,7 +8324,8 @@ function ThinkingPanel({
       background: "rgba(26,14,26,0.5)",
       maxHeight: 280,
       display: "flex",
-      flexDirection: "column"
+      flexDirection: "column",
+      position: "relative"
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex items-center justify-between px-3 py-2",
@@ -6874,6 +8355,7 @@ function ThinkingPanel({
     title: "\u5173\u95ED"
   }, "\xD7")), /*#__PURE__*/React.createElement("div", {
     ref: ref,
+    onScroll: handleScroll,
     style: {
       flex: 1,
       overflowY: "auto",
@@ -6938,7 +8420,35 @@ function ThinkingPanel({
         fontStyle: "italic"
       }
     }, "\uD83D\uDCAD ", item.thinking));
-  })));
+  })), showBackToBottom && /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      if (ref.current) {
+        ref.current.scrollTop = ref.current.scrollHeight;
+        isAtBottomRef.current = true;
+        setShowBackToBottom(false);
+      }
+    },
+    style: {
+      position: "absolute",
+      bottom: 12,
+      right: 12,
+      width: 32,
+      height: 32,
+      borderRadius: "50%",
+      background: "linear-gradient(135deg, #e6b450, #c89838)",
+      color: "#1a0e1a",
+      border: "none",
+      cursor: "pointer",
+      fontSize: 16,
+      fontWeight: "bold",
+      boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 10
+    },
+    title: "\u56DE\u5230\u6700\u65B0"
+  }, "\u2193"));
 }
 
 // 实录条目（含名字+颜色标签+队伍号高亮）
@@ -6961,7 +8471,10 @@ function HistoryEntry({
     队长总结: "#e6b450"
   };
   let speakerId = -1;
-  if (/^\d+号$/.test(entry.tag)) {
+  // 🆕 优先用 entry 上存的 speakerId（队长开场/总结明确指定）
+  if (entry.speakerId !== undefined && entry.speakerId !== null) {
+    speakerId = entry.speakerId;
+  } else if (/^\d+号$/.test(entry.tag)) {
     speakerId = parseInt(entry.tag.replace("号", "")) - 1;
   } else if (entry.tag === "队长开场" || entry.tag === "队长总结") {
     const m = entry.text.match(/^(\d+)号/);
@@ -7114,6 +8627,10 @@ function HistoryEntry({
 
   // 是不是某个玩家的发言（含队长开场/总结）
   const isSpeech = /^\d+号$/.test(entry.tag) || entry.tag === "队长开场" || entry.tag === "队长总结";
+
+  // 刺客身份是否已经公开（刺杀阶段公开后所有发言都加标签）
+  const speakerIsAssassin = speakerId >= 0 && game.players[speakerId]?.role === "Assassin";
+  const showAssassinTag = isSpeech && speakerIsAssassin && game.assassinRevealed;
   return /*#__PURE__*/React.createElement("div", {
     className: isSpeech ? "text-sm leading-relaxed py-1.5 px-2 rounded" : "text-sm leading-relaxed",
     style: isSpeech ? {
@@ -7136,7 +8653,14 @@ function HistoryEntry({
       color: "#e6b450",
       letterSpacing: "0.2em"
     }
-  }, "\u265B ", entry.tag.replace("队长", "")), colorTag && /*#__PURE__*/React.createElement("span", {
+  }, "\u265B ", entry.tag.replace("队长", "")), showAssassinTag && /*#__PURE__*/React.createElement("span", {
+    className: "text-xs px-1.5 py-0.5 rounded font-bold",
+    style: {
+      background: "rgba(200,72,56,0.3)",
+      color: "#ffaa88",
+      border: "1px solid #c84838"
+    }
+  }, "\uD83D\uDDE1 \u523A\u5BA2"), colorTag && !showAssassinTag && /*#__PURE__*/React.createElement("span", {
     className: "text-xs px-1.5 py-0.5 rounded",
     style: {
       background: colorTag.color + "33",
@@ -7274,7 +8798,13 @@ function CircleTable({
       style: {
         color: "#e6b450"
       }
-    }, "\u265B"), /*#__PURE__*/React.createElement("div", {
+    }, "\u265B"), game.assassinRevealed && p.role === "Assassin" && /*#__PURE__*/React.createElement("div", {
+      className: "absolute -top-3 text-base",
+      style: {
+        color: "#c84838",
+        filter: "drop-shadow(0 0 4px rgba(200,72,56,0.7))"
+      }
+    }, "\uD83D\uDDE1"), /*#__PURE__*/React.createElement("div", {
       style: {
         color: "#e8d8a8",
         fontSize: 14
@@ -7293,7 +8823,15 @@ function CircleTable({
         color: "#fff",
         background: myKnow.color
       }
-    }, myKnow.short), showAllRoles && !p.isHuman && /*#__PURE__*/React.createElement("div", {
+    }, myKnow.short), game.assassinRevealed && p.role === "Assassin" && !myKnow && !p.isHuman && /*#__PURE__*/React.createElement("div", {
+      className: "absolute -bottom-2 px-1 rounded",
+      style: {
+        fontSize: 9,
+        color: "#fff",
+        background: "#c84838",
+        border: "1px solid #e8a098"
+      }
+    }, "\u523A\u5BA2"), showAllRoles && !p.isHuman && !(game.assassinRevealed && p.role === "Assassin") && /*#__PURE__*/React.createElement("div", {
       className: "absolute -bottom-2 px-1 rounded whitespace-nowrap",
       style: {
         fontSize: 9,
@@ -7422,7 +8960,7 @@ function NotesPanel({
     }, /*#__PURE__*/React.createElement("div", {
       className: "flex items-center gap-1",
       style: {
-        width: 60,
+        width: 80,
         flexShrink: 0
       }
     }, /*#__PURE__*/React.createElement("span", {
@@ -7437,7 +8975,15 @@ function NotesPanel({
         background: myKnow.color,
         color: "#fff"
       }
-    }, myKnow.short)), /*#__PURE__*/React.createElement("input", {
+    }, myKnow.short), game.assassinRevealed && p.role === "Assassin" && !myKnow && /*#__PURE__*/React.createElement("span", {
+      className: "px-1 rounded",
+      style: {
+        fontSize: 8,
+        background: "#c84838",
+        color: "#fff",
+        border: "1px solid #e8a098"
+      }
+    }, "\u523A\u5BA2")), /*#__PURE__*/React.createElement("input", {
       value: game.notes?.[p.id] || "",
       onChange: e => setNote(p.id, e.target.value),
       placeholder: "\u50CF\u6885\u6797\uFF1F\u7EA2\u65B9\uFF1F...",
@@ -8030,13 +9576,22 @@ function ActionPanel({
   }, "\u2713 \u8D5E\u6210")));
   if (game.phase === "humanMission") {
     const isEvil = ROLE_DEFS[human.role].side === "evil";
+    const requireDouble = game.setup.doubleFail.includes(game.round);
     return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
       className: "text-sm uppercase mb-2",
       style: {
         color: "#e6b450",
         letterSpacing: "0.3em"
       }
-    }, "\u6267\u884C\u4EFB\u52A1"), showAdvice && /*#__PURE__*/React.createElement(AdviceBox, {
+    }, "\u6267\u884C\u4EFB\u52A1"), requireDouble && /*#__PURE__*/React.createElement("div", {
+      className: "mb-2 px-3 py-2 rounded border",
+      style: {
+        borderColor: "#e6b450",
+        background: "rgba(230,180,80,0.1)",
+        color: "#e6b450",
+        fontSize: 12
+      }
+    }, "\uD83D\uDEE1 ", /*#__PURE__*/React.createElement("b", null, "\u672C\u8F6E\u662F\u4FDD\u62A4\u8F6E\uFF08", game.playerCount, " \u4EBA\u5C40\u7B2C 4 \u8F6E\uFF09"), "\u2014\u2014\u9700\u8981 ", /*#__PURE__*/React.createElement("b", null, "2 \u5F20\u5931\u8D25\u7968"), "\u624D\u7B97\u5931\u8D25\u30021 \u5F20\u5931\u8D25\u7968\u4EFB\u52A1\u4ECD\u7136\u6210\u529F\uFF01"), showAdvice && /*#__PURE__*/React.createElement(AdviceBox, {
       text: adviceText,
       loading: adviceLoading,
       onGet: () => getAdvice(isEvil ? "我是红方在车上，应该投成功还是失败？要考虑当前局势（蓝方/红方各胜了几轮）。" : "我是蓝方在车上，应该投成功还是失败？")
@@ -8187,16 +9742,26 @@ function AdviceBox({
 }) {
   // 尝试从建议文本里提取"💬 你可以说"那段话术
   let extractedSpeech = "";
+  let thinkingPart = "";
+  let speechPart = "";
   if (text) {
+    // 提取 📌 思路
+    const tm = text.match(/📌\s*思路[:：]?\s*([^💬\n]+)/);
+    if (tm) thinkingPart = tm[1].trim();
+
+    // 提取 💬 话术
     const m = text.match(/💬[^"""「"]*["""「]([^"""」"]+)["""」"]/);
     if (m) extractedSpeech = m[1].trim();else {
-      // 兜底：找"你可以说"后面的内容
       const m2 = text.match(/你可以说[:：]?\s*[""「"]?([^""」"]+?)[""」"]?$/m);
       if (m2) extractedSpeech = m2[1].trim();
     }
-    // 再次剥掉残留的首尾引号（覆盖各种引号字符：直引号、弯引号、中文引号、书名号、单引号等）
+    // 剥掉首尾引号
     extractedSpeech = extractedSpeech.replace(/^[\s"'"'""'`「『〝《【\(（]+/g, "").replace(/[\s"'"'""'`」』〞》】\)）]+$/g, "").trim();
+    speechPart = extractedSpeech;
   }
+
+  // 如果识别不出结构化内容，就把整段文本当 thinking 展示
+  const showStructured = thinkingPart || speechPart;
   return /*#__PURE__*/React.createElement("div", {
     className: "mb-2 p-2 rounded border",
     style: {
@@ -8204,14 +9769,21 @@ function AdviceBox({
       background: "rgba(122,72,120,0.1)"
     }
   }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center justify-between mb-1"
+    className: "flex items-center justify-between mb-1.5"
   }, /*#__PURE__*/React.createElement("div", {
     className: "text-xs uppercase",
     style: {
       color: "#7a4878",
       letterSpacing: "0.2em"
     }
-  }, "\uD83D\uDCA1 AI \u5EFA\u8BAE"), /*#__PURE__*/React.createElement("div", {
+  }, "\uD83D\uDCA1 AI \u5EFA\u8BAE ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      color: "#a878a0",
+      marginLeft: 4,
+      letterSpacing: "0.1em"
+    }
+  }, "\u4EC5\u53C2\u8003\xB7\u4F60\u81EA\u5DF1\u51B3\u5B9A")), /*#__PURE__*/React.createElement("div", {
     className: "flex gap-1.5"
   }, extractedSpeech && onUseSpeech && /*#__PURE__*/React.createElement("button", {
     onClick: () => onUseSpeech(extractedSpeech),
@@ -8222,7 +9794,7 @@ function AdviceBox({
       background: "rgba(136,176,112,0.15)"
     },
     title: "\u628A\u8BDD\u672F\u586B\u5230\u53D1\u8A00\u6846\uFF08\u53EF\u4EE5\u518D\u4FEE\u6539\uFF09"
-  }, "\u2713 \u7528 AI \u8BDD\u672F"), /*#__PURE__*/React.createElement("button", {
+  }, "\u2713 \u7528\u6B64\u8BDD\u672F"), /*#__PURE__*/React.createElement("button", {
     onClick: onGet,
     disabled: loading,
     className: "px-2 py-0.5 text-xs rounded border",
@@ -8232,12 +9804,48 @@ function AdviceBox({
       background: loading ? "transparent" : "rgba(122,72,120,0.2)",
       cursor: loading ? "wait" : "pointer"
     }
-  }, loading ? "想想..." : text ? "再问" : "请教"))), text && /*#__PURE__*/React.createElement("div", {
+  }, loading ? "想想..." : text ? "再问一次" : "请教 AI"))), text && (showStructured ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      lineHeight: 1.6
+    }
+  }, thinkingPart && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "rgba(91,143,191,0.1)",
+      borderLeft: "2px solid #5b8fbf",
+      padding: "4px 8px",
+      marginBottom: 4,
+      color: "#a8c4d8"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#5b8fbf",
+      fontSize: 10,
+      fontWeight: 600,
+      letterSpacing: "0.1em",
+      marginRight: 4
+    }
+  }, "\uD83D\uDCCC \u601D\u8DEF"), thinkingPart), speechPart && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "rgba(136,176,112,0.1)",
+      borderLeft: "2px solid #88b070",
+      padding: "4px 8px",
+      color: "#e8d8a8"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#88b070",
+      fontSize: 10,
+      fontWeight: 600,
+      letterSpacing: "0.1em",
+      marginRight: 4
+    }
+  }, "\uD83D\uDCAC \u8BDD\u672F"), speechPart)) : /*#__PURE__*/React.createElement("div", {
     className: "text-xs leading-relaxed whitespace-pre-line",
     style: {
       color: "#e8d8a8"
     }
-  }, text));
+  }, text)));
 }
 function Reveal({
   game,
@@ -8366,7 +9974,7 @@ function AssassinationOverlay({
     bg = "rgba(20, 5, 5, 0.95)";
     accentColor = "#c84838";
     mainText = `${target.seatLabel}`;
-    subText = "刺客的剑已经举起...";
+    subText = "刺客指认其为梅林...";
     icon = "🗡";
   } else if (fx.phase === "reveal") {
     bg = isMerlin ? "rgba(70, 20, 20, 0.95)" : "rgba(20, 30, 60, 0.95)";
@@ -8528,6 +10136,8 @@ function End({
   const [recapLoading, setRecapLoading] = useState(game.useAPI && getDSKey());
   const [recapErr, setRecapErr] = useState(null);
   const [recapRetryCount, setRecapRetryCount] = useState(0);
+  const [showMissionDetail, setShowMissionDetail] = useState(null); // 🆕 复盘里点任务详情
+
   const tryGenerateRecap = async () => {
     if (!game.useAPI || !getDSKey()) return;
     setRecapLoading(true);
@@ -8686,13 +10296,23 @@ function End({
     style: {
       color: "#d8843c"
     }
-  }, "\u4EFB\u52A1\u8BB0\u5F55"), /*#__PURE__*/React.createElement("div", {
+  }, "\u4EFB\u52A1\u8BB0\u5F55 ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      color: "#88a058"
+    }
+  }, "\uFF08\u70B9\u51FB\u67E5\u770B\u8BE6\u60C5\uFF09")), /*#__PURE__*/React.createElement("div", {
     className: "space-y-2"
   }, game.missionResults.map((m, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
-    className: "text-sm pb-1",
+    onClick: () => setShowMissionDetail(i),
+    className: "text-sm pb-1 cursor-pointer hover:bg-opacity-50",
     style: {
-      borderBottom: i < game.missionResults.length - 1 ? "1px solid rgba(90,72,56,0.3)" : "none"
+      borderBottom: i < game.missionResults.length - 1 ? "1px solid rgba(90,72,56,0.3)" : "none",
+      cursor: "pointer",
+      padding: "4px 6px",
+      borderRadius: 3,
+      background: "rgba(0,0,0,0.1)"
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
@@ -8703,7 +10323,17 @@ function End({
       color: "#a8a058",
       marginLeft: 8
     }
-  }, "\u5931\u8D25 ", m.fails, " \u5F20")))))), /*#__PURE__*/React.createElement("button", {
+  }, "\u5931\u8D25 ", m.fails, " \u5F20"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#88a878",
+      marginLeft: 8,
+      fontSize: 11
+    }
+  }, "\xB7 \u961F\u4F0D\uFF1A", m.team.map(id => game.players[id].seatLabel).join("、"))))))), showMissionDetail !== null && /*#__PURE__*/React.createElement(MissionDetailOverlay, {
+    round: showMissionDetail,
+    game: game,
+    onClose: () => setShowMissionDetail(null)
+  }), /*#__PURE__*/React.createElement("button", {
     onClick: onRestart,
     className: "w-full py-3 mt-5 border-2 tracking-widest uppercase text-base rounded glow",
     style: {
@@ -8714,7 +10344,7 @@ function End({
   }, "\u518D  \u6765  \u4E00  \u5C40"));
 }
 const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(/*#__PURE__*/React.createElement(App, null));
+root.render(/*#__PURE__*/React.createElement(ErrorBoundary, null, /*#__PURE__*/React.createElement(App, null)));
 document.getElementById("boot").classList.add("hidden");
 </script>
 
