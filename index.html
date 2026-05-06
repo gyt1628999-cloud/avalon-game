@@ -2650,12 +2650,23 @@ ${isSpeakerEvil ? `- 你是红方，可以适度反对（把车搅黄延缓游�
 - **你之后还会发言的人**：${remainingAfterMe.join("、") || "（你是最后一个）"} —— TA 们还没说话
 
 ⚠️ **关于还没发言的人，绝对禁止说**：
-- ❌ "X 号怎么还没发言""X 号你怎么还没说话""X 号你为什么没表态"
-- ❌ "X 号一直没吭声""X 号沉默是金""X 号怎么没意见"
-- ❌ 任何质疑/追问 TA 不发言的话
+- ❌ "${remainingAfterMe[0] || "X"} 号怎么还没发言""${remainingAfterMe[0] || "X"} 号你怎么还没说话""${remainingAfterMe[0] || "X"} 号没表态"
+- ❌ "${remainingAfterMe[0] || "X"} 号一直没吭声""${remainingAfterMe[0] || "X"} 号沉默是金""${remainingAfterMe[0] || "X"} 号怎么没意见"
+- ❌ "${remainingAfterMe[0] || "X"} 号从头到尾没表过态""${remainingAfterMe[0] || "X"} 号像在躲事"
+- ❌ 任何质疑/追问 TA 不发言、没表态、没站队、躲事的话
 
-🔴 **原因**：TA 还没轮到发言！这不是"沉默"，是"还没轮到"。如果你这么说会立刻暴露你不懂规则——发言是按顺序来的，TA 在你之后发言。
-- 只有当 TA **已经轮到发言**且明显不发或敷衍时，才能用"沉默"等词来追问 TA`;
+🔴 **铁律原因**：${remainingAfterMe.join("、") || "TA"} **还没轮到发言**！这不是"沉默"也不是"躲事"，是"还没轮到"。如果你这么说会立刻暴露你不懂规则——发言是按顺序来的，TA 在你之后发言。
+- ⚠️ 你只能说**已经发过言的人**（${spokenLabels.join("、") || "队长"}）的事
+- ⚠️ 还没发言的人（${remainingAfterMe.join("、") || "无"}）—— **当 TA 不存在**，别提 TA、别质疑 TA
+
+✅ **正确范例**：
+- "${spokenLabels[0] || "队长"}的话我同意，加上一点..."（引用已发言的）
+- "我先表态，等后面的 ${remainingAfterMe[0] || ""}${remainingAfterMe.length > 1 ? "、" + remainingAfterMe[1] : ""} 怎么说"（中性提及，不质疑）
+- "信息少先跑起来看看"（不点名）
+
+❌ **错误范例（会被识破的话）**：
+- ❌ "${remainingAfterMe[0] || "4"} 号从头到尾没表过态，像在躲事" ← TA 还没轮到！
+- ❌ "${remainingAfterMe[0] || "4"} 号你说话啊" ← TA 没轮到！`;
   }
 
   // 提示前面玩家说了啥，让 AI 避开
@@ -7257,6 +7268,10 @@ function Play({
         pendingSpeechOrder: undefined,
         pendingSpeechIdx: undefined
       }));
+    }
+    // 🆕 真人交互 phase——明确释放 runningRef 让 UI 显示
+    else if (game.phase === "humanPropose" || game.phase === "humanRevise" || game.phase === "humanPickDirection" || game.phase === "humanLeaderOpening") {
+      runningRef.current = false;
     } else {
       runningRef.current = false;
     }
@@ -8487,6 +8502,10 @@ function Play({
     setSpeech("");
   }
   function humanSubmitClosing(text) {
+    // 🔒 安全释放：以防之前的 AI 流程异常退出导致锁没释放
+    if (__aiSpeakLock.busy) {
+      __aiSpeakLock.busy = false;
+    }
     const g = {
       ...game
     };
@@ -8500,6 +8519,9 @@ function Play({
     setSpeech("");
   }
   function humanKeep() {
+    if (__aiSpeakLock.busy) {
+      __aiSpeakLock.busy = false;
+    }
     const g = {
       ...game
     };
@@ -8511,6 +8533,9 @@ function Play({
     setGame(g);
   }
   function humanRevise() {
+    if (__aiSpeakLock.busy) {
+      __aiSpeakLock.busy = false;
+    }
     const g = {
       ...game
     };
@@ -8525,6 +8550,9 @@ function Play({
     setGame(g);
   }
   function humanSubmitRevised() {
+    if (__aiSpeakLock.busy) {
+      __aiSpeakLock.busy = false;
+    }
     if (pendingTeam.length !== teamSize) return;
     const g = {
       ...game
