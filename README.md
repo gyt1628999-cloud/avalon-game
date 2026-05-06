@@ -1,6 +1,7 @@
 <div align="center">
 
-![Avalon Banner](readme-assets/banner.png)
+<img width="1200" height="360" alt="banner" src="https://github.com/user-attachments/assets/d5d6c544-e5cb-491a-95b5-571f054f90eb" />
+
 
 # 🏰 阿瓦隆 · Avalon
 
@@ -38,6 +39,9 @@
 > *—— 故事在这里展开。但这一次，桌上只有你一个真人。*
 
 ---
+
+<img width="2549" height="1403" alt="7515d50c5e8b9cc2f7c9c45bd25dd58a" src="https://github.com/user-attachments/assets/6f18f76d-b2f1-4853-b3a6-e5c78e711e3b" />
+
 
 ## 🇨🇳 中文文档
 
@@ -151,7 +155,8 @@
 
 ### 🃏 你和 AI 玩家会扮演哪些角色
 
-![Roles](readme-assets/roles.png)
+<img width="1200" height="800" alt="roles" src="https://github.com/user-attachments/assets/573b60ce-8fe5-4e36-9367-ce3e6422e095" />
+
 
 每局游戏里，你和 AI 会**随机分到角色**——你可能是梅林、刺客、奥伯伦……AI 们会拿到剩下的角色。
 
@@ -248,7 +253,8 @@
 
 ### 🎲 一轮怎么玩
 
-![Flow](readme-assets/flow.png)
+<img width="1200" height="700" alt="flow" src="https://github.com/user-attachments/assets/585bdf88-547f-4fd9-be71-d1f2974d738e" />
+
 
 ```
 1. 队长选 N 人组队（队长可能是你、也可能是 AI）
