@@ -877,6 +877,8 @@ function buildGame(playerCount, humanName, assistMode) {
     humanName,
     assistMode: assistMode || "self",
     originalAssistMode: assistMode || "self",
+    seatModelsSnapshot: getSeatModels(),
+    // 🆕 本局的 AI 玩家模型配置快照——续盘时还原
     createdAt: Date.now()
   };
 }
@@ -1190,7 +1192,8 @@ ${game.assassinDiscussion && game.assassinDiscussion.length > 0 ? `\n【刚才�
       content: prompt
     }], 50, {
       model: "deepseek-v4-flash",
-      temperature: 0.7
+      temperature: 0.7,
+      seatId: ass.id
     });
     // 从结果里提取号牌
     const match = result.match(/(\d+)\s*号/);
@@ -1326,7 +1329,8 @@ ${isFollowUp ? `- 🔄 **这是你的追加发言**（你之前已经说过一�
       content: prompt
     }], 150, {
       model: "deepseek-v4-flash",
-      temperature: 0.85
+      temperature: 0.85,
+      seatId: speaker.id
     });
     return result.trim();
   } catch (e) {
@@ -1364,20 +1368,28 @@ const PROVIDERS = {
     rechargeNote: "需要付费充值。¥10 起，按用量计费很便宜，能玩几十局",
     models: [{
       id: "deepseek-v4-flash",
-      name: "⚡ V4 Flash",
-      desc: "默认推荐 · 快 · 便宜"
+      name: "⚡ V4 Flash 🟢便宜",
+      desc: "默认推荐 · 快 · 便宜",
+      speed: "fast",
+      cost: "cheap"
     }, {
       id: "deepseek-v4-pro",
-      name: "🧠 V4 Pro",
-      desc: "更聪明 · 较慢较贵"
+      name: "🧠 V4 Pro 💸稍贵",
+      desc: "更聪明 · 较慢",
+      speed: "medium",
+      cost: "premium"
     }, {
       id: "deepseek-chat",
-      name: "💬 V3.2 Chat",
-      desc: "兼容旧版"
+      name: "💬 V3.2 Chat 🟢便宜",
+      desc: "兼容旧版",
+      speed: "fast",
+      cost: "cheap"
     }, {
       id: "deepseek-reasoner",
-      name: "🧠 R1 Reasoner",
-      desc: "兼容旧版"
+      name: "🧠 R1 Reasoner 💸稍贵",
+      desc: "兼容旧版 · 推理慢",
+      speed: "slow",
+      cost: "premium"
     }],
     free: false
   },
@@ -1391,16 +1403,34 @@ const PROVIDERS = {
     rechargeNote: "新用户实名后送免费额度。用完后在百度智能云充值",
     models: [{
       id: "ernie-x1-turbo-32k",
-      name: "🆓 X1 Turbo 32K",
-      desc: "免费首选 · 推理快"
+      name: "🆓 X1 Turbo 32K 🆓免费",
+      desc: "免费首选 · 推理快",
+      speed: "fast",
+      cost: "free"
+    }, {
+      id: "ernie-5.0",
+      name: "🌟 ERNIE 5.0 💎贵",
+      desc: "旗舰 · 多模态最强",
+      speed: "medium",
+      cost: "expensive"
+    }, {
+      id: "ernie-4.5-turbo-128k",
+      name: "💎 ERNIE 4.5 Turbo 🟢便宜",
+      desc: "新一代主力 · 性价比高",
+      speed: "fast",
+      cost: "cheap"
     }, {
       id: "ernie-3.5-8k",
-      name: "💬 ERNIE 3.5",
-      desc: "经典稳定 · 偏便宜"
+      name: "💬 ERNIE 3.5 🟢便宜",
+      desc: "经典稳定 · 偏便宜",
+      speed: "fast",
+      cost: "cheap"
     }, {
       id: "ernie-x1.1",
-      name: "🧠 ERNIE X1.1",
-      desc: "深度推理 · 偏便宜"
+      name: "🧠 ERNIE X1.1 💸稍贵",
+      desc: "深度推理",
+      speed: "medium",
+      cost: "premium"
     }],
     free: true
   },
@@ -1413,13 +1443,29 @@ const PROVIDERS = {
     rechargeUrl: "https://platform.moonshot.cn/console/pay",
     rechargeNote: "需要付费充值。最低 ¥1 起，按用量计费",
     models: [{
+      id: "kimi-k2.6",
+      name: "🔥 Kimi K2.6 💸稍贵",
+      desc: "最新预览 · 多模态强",
+      speed: "medium",
+      cost: "premium"
+    }, {
+      id: "kimi-k2.5",
+      name: "🌟 Kimi K2.5 💸稍贵",
+      desc: "稳定旗舰 · 推荐",
+      speed: "medium",
+      cost: "premium"
+    }, {
       id: "moonshot-v1-8k",
-      name: "💬 K1 8K",
-      desc: "默认推荐 · 便宜 · 快"
+      name: "💬 K1 8K 🟢便宜",
+      desc: "便宜 · 快",
+      speed: "fast",
+      cost: "cheap"
     }, {
       id: "moonshot-v1-32k",
-      name: "📘 K1 32K",
-      desc: "中等 · 长上下文"
+      name: "📘 K1 32K 🟢便宜",
+      desc: "长上下文",
+      speed: "fast",
+      cost: "cheap"
     }],
     free: false
   },
@@ -1433,22 +1479,144 @@ const PROVIDERS = {
     rechargeNote: "实名认证送 500 万 Token；GLM-4-Flash 永久免费！",
     models: [{
       id: "glm-4-flash",
-      name: "⚡ GLM-4-Flash",
-      desc: "✨ 永久免费 · 反应最快 · 强烈推荐"
+      name: "⚡ GLM-4-Flash 🆓永久免费",
+      desc: "✨ 永久免费 · 反应最快 · 强烈推荐",
+      speed: "fast",
+      cost: "free"
     }, {
       id: "glm-z1-flash",
-      name: "🧠 GLM-Z1-Flash",
-      desc: "⚠️ 推理模型 · 思考慢 · 不推荐用于桌游"
+      name: "🧠 GLM-Z1-Flash 🆓免费",
+      desc: "⚠️ 推理模型 · 思考慢 · 不推荐用于桌游",
+      speed: "slow",
+      cost: "free"
     }, {
       id: "glm-4-air",
-      name: "💨 GLM-4-Air",
-      desc: "便宜 · 中文地道（付费）"
+      name: "💨 GLM-4-Air 🟢便宜",
+      desc: "便宜 · 中文地道（付费）",
+      speed: "fast",
+      cost: "cheap"
     }, {
       id: "glm-4-plus",
-      name: "🌟 GLM-4-Plus",
-      desc: "旗舰 · 推理最准（付费）"
+      name: "🌟 GLM-4-Plus 💸稍贵",
+      desc: "旗舰 · 推理最准（付费）",
+      speed: "medium",
+      cost: "premium"
     }],
     free: true
+  },
+  // 🆕 阿里通义千问
+  qwen: {
+    label: "阿里通义",
+    desc: "阿里云 Qwen · 个人开发者最友好",
+    url: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    keyHint: "sk-xxxxxx",
+    site: "https://bailian.console.aliyun.com",
+    rechargeUrl: "https://bailian.console.aliyun.com/?tab=model#/api-key",
+    rechargeNote: "新用户领取千万免费 token，90 天有效。开通即用，OpenAI 兼容",
+    models: [{
+      id: "qwen3.6-max-preview",
+      name: "🔥 Qwen3.6-Max-Preview 💎贵",
+      desc: "最新预览 · 推理最强（昂贵）",
+      speed: "medium",
+      cost: "expensive"
+    }, {
+      id: "qwen3-max",
+      name: "🌟 Qwen3-Max 💸稍贵",
+      desc: "旗舰版 · 大参数（稍贵）",
+      speed: "medium",
+      cost: "premium"
+    }, {
+      id: "qwen-plus",
+      name: "💎 Qwen-Plus 🟢便宜",
+      desc: "默认推荐 · 性价比最高",
+      speed: "fast",
+      cost: "cheap"
+    }, {
+      id: "qwen-turbo",
+      name: "⚡ Qwen-Turbo 🆓极便宜",
+      desc: "极速 · 免费额度首选",
+      speed: "fast",
+      cost: "free"
+    }, {
+      id: "qwen-flash",
+      name: "💨 Qwen-Flash 🆓极便宜",
+      desc: "新版 Turbo · 极便宜",
+      speed: "fast",
+      cost: "free"
+    }, {
+      id: "qwen-long",
+      name: "📘 Qwen-Long 🟢便宜",
+      desc: "10M 长上下文 · 桌游用得上",
+      speed: "medium",
+      cost: "cheap"
+    }],
+    free: true
+  },
+  // 🆕 字节豆包
+  doubao: {
+    label: "字节豆包",
+    desc: "字节火山引擎 · 价格便宜",
+    url: "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+    keyHint: "本接入点 ID（ep-xxxx）或 API Key",
+    site: "https://console.volcengine.com/ark",
+    rechargeUrl: "https://console.volcengine.com/finance",
+    rechargeNote: "需要先在火山引擎创建模型推理接入点。个人开发者需手机号实名",
+    models: [{
+      id: "doubao-seed-2-0-pro-260215",
+      name: "🌟 Doubao Seed 2.0 Pro 💸稍贵",
+      desc: "旗舰 · 长链路 Agent",
+      speed: "medium",
+      cost: "premium"
+    }, {
+      id: "doubao-seed-2-0-lite-260215",
+      name: "💎 Doubao Seed 2.0 Lite 🟢便宜",
+      desc: "默认推荐 · 均衡",
+      speed: "fast",
+      cost: "cheap"
+    }, {
+      id: "doubao-seed-2-0-mini-260215",
+      name: "⚡ Doubao Seed 2.0 Mini 🟢极便宜",
+      desc: "极速 · 价格便宜 10 倍",
+      speed: "fast",
+      cost: "cheap"
+    }, {
+      id: "doubao-seed-1-6-251015",
+      name: "💬 Doubao Seed 1.6 🟢便宜",
+      desc: "上一代旗舰 · 兼容",
+      speed: "fast",
+      cost: "cheap"
+    }],
+    free: false
+  },
+  // 🆕 百川 Baichuan
+  baichuan: {
+    label: "百川 Baichuan",
+    desc: "百川智能 · 中文写作好",
+    url: "https://api.baichuan-ai.com/v1/chat/completions",
+    keyHint: "sk-xxxx",
+    site: "https://platform.baichuan-ai.com",
+    rechargeUrl: "https://platform.baichuan-ai.com/finance/topup",
+    rechargeNote: "新用户实名认证送 80 元代金券",
+    models: [{
+      id: "Baichuan4-Air",
+      name: "💨 Baichuan4-Air 🟢便宜",
+      desc: "便宜 · 快",
+      speed: "fast",
+      cost: "cheap"
+    }, {
+      id: "Baichuan4-Turbo",
+      name: "⚡ Baichuan4-Turbo 🟢便宜",
+      desc: "默认推荐 · 极速",
+      speed: "fast",
+      cost: "cheap"
+    }, {
+      id: "Baichuan4",
+      name: "🌟 Baichuan4 💸稍贵",
+      desc: "旗舰 · 写作强",
+      speed: "medium",
+      cost: "premium"
+    }],
+    free: false
   }
 };
 const DS_KEY_STORAGE = "avalon_ds_key"; // DeepSeek key
@@ -1457,7 +1625,56 @@ const PROVIDER_STORAGE = "avalon_provider"; // 当前 provider
 const KIMI_KEY_STORAGE = "avalon_kimi_key"; // Kimi key
 const QF_KEY_STORAGE = "avalon_qf_key"; // 千帆 key
 const ZHIPU_KEY_STORAGE = "avalon_zhipu_key"; // 智谱 GLM key
+const QWEN_KEY_STORAGE = "avalon_qwen_key"; // 阿里通义 key
+const DOUBAO_KEY_STORAGE = "avalon_doubao_key"; // 字节豆包 key
+const BAICHUAN_KEY_STORAGE = "avalon_baichuan_key"; // 百川 key
+const SEAT_MODELS_STORAGE = "avalon_seat_models"; // 🆕 每个座位单独的模型配置
 
+// 🆕 座位模型管理：返回 { seatId: { provider, model } } 对象
+// 没配置的座位会回退到全局当前 provider+model
+const getSeatModels = () => {
+  try {
+    const raw = localStorage.getItem(SEAT_MODELS_STORAGE);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+const setSeatModels = obj => {
+  try {
+    localStorage.setItem(SEAT_MODELS_STORAGE, JSON.stringify(obj || {}));
+  } catch {}
+};
+// 取某个座位的最终 provider+model（没设置就用全局）
+const getModelForSeat = seatId => {
+  const seatCfg = getSeatModels()[seatId];
+  // 🆕 本地预设标记——直接返回，调用方需要识别
+  if (seatCfg && seatCfg.provider === "__local__") {
+    return {
+      provider: "__local__",
+      model: "__local__"
+    };
+  }
+  if (seatCfg && seatCfg.provider && seatCfg.model && PROVIDERS[seatCfg.provider]) {
+    // 校验 key 存在
+    if (getKeyFor(seatCfg.provider)) {
+      // 校验 model 在该 provider 模型列表里
+      if (PROVIDERS[seatCfg.provider].models.find(m => m.id === seatCfg.model)) {
+        return {
+          provider: seatCfg.provider,
+          model: seatCfg.model
+        };
+      }
+    }
+  }
+  // 兜底：用当前全局 provider + model
+  return {
+    provider: getProvider(),
+    model: getDSModel()
+  };
+};
 const getProvider = () => {
   try {
     const p = localStorage.getItem(PROVIDER_STORAGE) || "deepseek";
@@ -1479,6 +1696,9 @@ const getKeyFor = provider => {
     if (provider === "kimi") return localStorage.getItem(KIMI_KEY_STORAGE) || "";
     if (provider === "qianfan") return localStorage.getItem(QF_KEY_STORAGE) || "";
     if (provider === "zhipu") return localStorage.getItem(ZHIPU_KEY_STORAGE) || "";
+    if (provider === "qwen") return localStorage.getItem(QWEN_KEY_STORAGE) || "";
+    if (provider === "doubao") return localStorage.getItem(DOUBAO_KEY_STORAGE) || "";
+    if (provider === "baichuan") return localStorage.getItem(BAICHUAN_KEY_STORAGE) || "";
     return localStorage.getItem(DS_KEY_STORAGE) || "";
   } catch {
     return "";
@@ -1486,7 +1706,7 @@ const getKeyFor = provider => {
 };
 const setKeyFor = (provider, k) => {
   try {
-    const storage = provider === "kimi" ? KIMI_KEY_STORAGE : provider === "qianfan" ? QF_KEY_STORAGE : provider === "zhipu" ? ZHIPU_KEY_STORAGE : DS_KEY_STORAGE;
+    const storage = provider === "kimi" ? KIMI_KEY_STORAGE : provider === "qianfan" ? QF_KEY_STORAGE : provider === "zhipu" ? ZHIPU_KEY_STORAGE : provider === "qwen" ? QWEN_KEY_STORAGE : provider === "doubao" ? DOUBAO_KEY_STORAGE : provider === "baichuan" ? BAICHUAN_KEY_STORAGE : DS_KEY_STORAGE;
     if (k) localStorage.setItem(storage, k);else localStorage.removeItem(storage);
   } catch {}
 };
@@ -1540,14 +1760,26 @@ function __apiRelease() {
 async function callDeepSeek(messages, maxTokens = 400, opts = {}) {
   await __apiAcquire();
   try {
-    const provider = getProvider();
+    // 🆕 支持指定座位——每个座位可以用不同的 provider + model
+    // 🆕 也支持显式指定 provider+model（用于复盘/建议自动挑最快模型）
+    let provider, model;
+    if (opts.provider) {
+      provider = opts.provider;
+      model = opts.model || PROVIDERS[opts.provider]?.models?.[0]?.id;
+    } else if (opts.seatId !== undefined && opts.seatId !== null) {
+      const sm = getModelForSeat(opts.seatId);
+      provider = sm.provider;
+      model = sm.model;
+    } else {
+      provider = getProvider();
+      model = opts.model || getDSModel();
+    }
     const cfg = PROVIDERS[provider];
     const key = getKeyFor(provider);
     if (!key) throw new Error("NO_KEY");
     // 如果调用方指定了 model 但当前 provider 不支持，回退到当前 provider 默认模型
-    let model = opts.model || getDSModel();
-    if (opts.model && !cfg.models.find(m => m.id === opts.model)) {
-      // 调用方要求"chat 模型"——找当前 provider 第一个 model 当默认
+    // 仅当没显式传 provider 时才回退（显式传了应该已经匹配过）
+    if (!opts.provider && opts.model && !cfg.models.find(m => m.id === opts.model)) {
       model = cfg.models[0].id;
     }
     // 不同 provider 的最优参数（调教过的）
@@ -1577,21 +1809,57 @@ async function callDeepSeek(messages, maxTokens = 400, opts = {}) {
         top_p: 0.95,
         frequency_penalty: 0.2,
         presence_penalty: 0.3
-      } // 智谱 GLM 倾向写得短——调高 temp 和降低 frequency_penalty 鼓励多说
+      },
+      // 智谱 GLM 倾向写得短——调高 temp 和降低 frequency_penalty 鼓励多说
+      qwen: {
+        temperature: 0.9,
+        top_p: 0.9,
+        frequency_penalty: 0.3,
+        presence_penalty: 0.3
+      },
+      // 通义中文好，标准参数
+      doubao: {
+        temperature: 0.9,
+        top_p: 0.9,
+        frequency_penalty: 0.3,
+        presence_penalty: 0.3
+      },
+      // 豆包风格地道
+      baichuan: {
+        temperature: 0.9,
+        top_p: 0.9,
+        frequency_penalty: 0.4,
+        presence_penalty: 0.4
+      } // 百川写作好
     };
     const baseParams = PROVIDER_PARAMS[provider] || PROVIDER_PARAMS.deepseek;
     // 🆕 轻量模型容易被截断——给它们更大的 max_tokens
-    const isLight = provider === "zhipu" || provider === "qianfan" || provider === "kimi";
+    const isLight = provider === "zhipu" || provider === "qianfan" || provider === "kimi" || provider === "qwen" || provider === "doubao" || provider === "baichuan";
     const finalMaxTokens = isLight ? Math.max(maxTokens, 600) : maxTokens;
+
+    // 🔧 模型兼容性处理
+    // 1) Kimi K2.5 / K2.6 是推理模型——只接受 temperature=1
+    // 2) 百川对 frequency_penalty / presence_penalty 不友好——某些值会拒绝
+    // 3) Qwen3.6-Max-Preview 推理模式——也限制 temperature
+    const isReasoningModel = /kimi-k2\.[5-9]/i.test(model) || /qwen3\.6-max-preview/i.test(model) || /thinking/i.test(model) || /reasoner/i.test(model) || /-z1-/i.test(model);
+    const isBaichuan = provider === "baichuan";
     const body = {
       model,
       messages,
-      max_tokens: finalMaxTokens,
-      temperature: opts.temperature !== undefined ? opts.temperature : baseParams.temperature,
-      top_p: opts.top_p !== undefined ? opts.top_p : baseParams.top_p,
-      frequency_penalty: baseParams.frequency_penalty,
-      presence_penalty: baseParams.presence_penalty
+      max_tokens: finalMaxTokens
     };
+    if (isReasoningModel) {
+      // 推理模型：用 1 作为 temperature，不传 top_p / frequency_penalty / presence_penalty
+      body.temperature = 1;
+    } else {
+      body.temperature = opts.temperature !== undefined ? opts.temperature : baseParams.temperature;
+      body.top_p = opts.top_p !== undefined ? opts.top_p : baseParams.top_p;
+      // 百川不支持 frequency_penalty / presence_penalty
+      if (!isBaichuan) {
+        body.frequency_penalty = baseParams.frequency_penalty;
+        body.presence_penalty = baseParams.presence_penalty;
+      }
+    }
     const resp = await fetch(cfg.url, {
       method: "POST",
       headers: {
@@ -1645,6 +1913,59 @@ async function testDSKey(key) {
       err: msg
     };
   }
+}
+
+// 🆕 阶段 3：从「已配 Key 的模型」里挑最快的——给复盘/建议/总结用
+// 优先级：speed=fast 优先 > cost=cheap/free 优先 > 排除 GLM-Z1-Flash 等慢推理模型
+function pickFastestModel() {
+  // 收集所有已开通 Key 的厂商里的所有模型（含全局 + 各座位用过的）
+  const candidates = [];
+  Object.entries(PROVIDERS).forEach(([pid, cfg]) => {
+    if (!getKeyFor(pid)) return; // 没填 Key 的厂商跳过
+    cfg.models.forEach(m => {
+      // 排除已知慢的推理模型
+      if (m.speed === "slow") return;
+      if (m.id === "glm-z1-flash" || m.id === "deepseek-reasoner") return;
+      // 排除推理模型（temperature=1 强制版）
+      if (/kimi-k2\.[5-9]/i.test(m.id)) return; // K2.5/K2.6 是推理模型，速度中等偏慢
+      if (/qwen3\.6-max-preview/i.test(m.id)) return;
+      if (/-z1-/i.test(m.id) || /reasoner/i.test(m.id) || /thinking/i.test(m.id)) return;
+      candidates.push({
+        provider: pid,
+        model: m.id,
+        speed: m.speed,
+        cost: m.cost
+      });
+    });
+  });
+  if (candidates.length === 0) {
+    // 全没了？兜底：用全局
+    return {
+      provider: getProvider(),
+      model: getDSModel()
+    };
+  }
+  // 排序：speed=fast 优先，然后 cost=free/cheap 优先
+  const speedRank = {
+    fast: 0,
+    medium: 1,
+    slow: 2
+  };
+  const costRank = {
+    free: 0,
+    cheap: 1,
+    premium: 2,
+    expensive: 3
+  };
+  candidates.sort((a, b) => {
+    const sd = (speedRank[a.speed] ?? 1) - (speedRank[b.speed] ?? 1);
+    if (sd !== 0) return sd;
+    return (costRank[a.cost] ?? 2) - (costRank[b.cost] ?? 2);
+  });
+  return {
+    provider: candidates[0].provider,
+    model: candidates[0].model
+  };
 }
 
 // ============================================================
@@ -2678,9 +2999,12 @@ ${isSpeakerEvil ? `- 你是红方，可以适度反对（把车搅黄延缓游�
 
   // 三档长度——整体偏中长，因为要有完整推理链
   const lenRoll = Math.random();
-  // 🆕 轻量模型（智谱 Flash / 千帆 / Kimi）容易写太短——给它们设最低字数门槛
-  const provider = getProvider();
-  const isLightModel = provider === "zhipu" || provider === "qianfan" || provider === "kimi";
+  // 🆕 轻量模型容易写太短——给它们设最低字数门槛
+  // 🆕 阶段 5：按"该座位实际用的 provider"判断，不再用全局 getProvider()
+  const seatModelInfo = getModelForSeat(speaker.id);
+  const provider = seatModelInfo.provider === "__local__" ? "deepseek" : seatModelInfo.provider;
+  // 阿里 Qwen Plus/Turbo/Flash、百川 Air/Turbo、豆包 Lite/Mini 也是轻量模型
+  const isLightModel = provider === "zhipu" || provider === "qianfan" || provider === "kimi" || provider === "qwen" || provider === "doubao" || provider === "baichuan";
   let lengthHint;
   if (isFirstRound) {
     // 🆕 第 1 轮信息真的太少——可以发短水话甚至"无话可说"
@@ -3143,7 +3467,10 @@ ${game.assistMode === "auto" ? `═══ 输出格式（重要！必须严格�
 <<<发言>>>
 （你说出口的话）` : `直接输出发言（不要带任何标签前缀，不要带"<<<心声>>>"或"<<<发言>>>"这些字样，纯发言正文即可）：`}` + (() => {
     // === 不同 provider 的针对性风格强化 ===
-    const provider = getProvider();
+    // 🆕 按"该座位实际用的 provider"取，不是全局 provider——支持每座位不同模型
+    const seatModel = getModelForSeat(speaker.id);
+    const provider = seatModel.provider === "__local__" ? null : seatModel.provider;
+    if (!provider) return "";
     if (provider === "qianfan") {
       return `
 
@@ -3217,7 +3544,7 @@ ${game.assistMode === "auto" ? `═══ 输出格式（重要！必须严格�
 4. **必须引用具体玩家 + 具体事实**：至少 2 个。例：
    • "1 号说 3 号是好人，但 3 号上轮在失败队"
    • "5 号刚才反对了 6 号那队，理由是 X，但..."
-5. **回应别人**：上面【刚才大家说的】里别人提到的观点，必须吸收并回应（同意/反对/追问）。
+5. **回应别人**：上面【刚才大家说的】里别人提到的观点，必须吸收并回应(同意/反对/追问)。
 6. **第一人称**：谈自己用"我"，不用自己的号牌。说别人才用号牌。
 
 【绝对禁止】
@@ -3239,6 +3566,113 @@ ${game.assistMode === "auto" ? `═══ 输出格式（重要！必须严格�
 4. **跟别人齐头并进**——别人分析 150 字你也要 80-150 字，不能短句敷衍
 5. **不许骂人/攻击**——禁用"垃圾""脑残""蠢"，不爽用"我有疑问"代替`;
     }
+    // 🆕 阶段 5：阿里通义 Qwen 风格强化
+    if (provider === "qwen") {
+      return `
+
+═══════ ⚠️ 风格强制约束（阿里通义 Qwen 必读）══════════
+**Qwen 倾向理性严谨——但阿瓦隆是真人桌游，不是论文答辩！**
+**最大问题：太书面化、爱用"客观来说"、爱说"作为玩家"这种 AI 助手腔。**
+
+【硬要求】
+1. **第一人称浸入**：你**就是**【${speaker.seatLabel}】，不是"扮演${speaker.seatLabel}的 AI"。绝对禁止"作为玩家""作为${ROLE_DEFS[speaker.role].label}""扮演的角度"等元话语。
+2. **像聊天、不像写论文**：阿瓦隆是朋友间的桌游嘴炮，不是 KPI 汇报。**口语化**——多用"我看""我觉得""明显""绝对""这逼"等口语词。
+3. **结论前置**：先说态度（"我反对这队"），再讲理由——不要先铺垫一大段"综上分析"再给结论。
+4. **完整推理链**：必须有"因为 X → 所以 Y"的连接。比如"5 号上轮跟 3 号一队失败 → 这轮 5 号还提名 3 号 → 5 号有问题"。
+5. **引用具体事实**：至少 2 个具体玩家行为/投票/任务结果，不是空泛"局势"。
+6. **回应别人**：上面【刚才大家说的】其他玩家的观点必须消化——同意/反驳/追问。
+
+【绝对禁止】
+- ❌ 元话语："作为玩家""扮演...的角度""从我的身份出发""作为${ROLE_DEFS[speaker.role].label}"——你**就是这个角色**！
+- ❌ 书面四字词："综合考量""客观来看""理性分析""审慎判断""不容忽视"
+- ❌ 论文连接词："首先""其次""再者""综上""值得注意的是""不难看出"
+- ❌ 模糊定调："存在一定的疑点""值得进一步观察""目前难以判断"——必须明确表态
+- ❌ 端着："不才认为""窃以为""愚以为"——咱在桌游不是文言文
+
+【正面示范】
+✓ "5 号这逼明显有问题，上轮跟 3 号一队挂了，这轮还提 3 号——要么瞎要么搭子，我反对。"
+✓ "听 1 号刚说 3 号干净，但 3 号上轮投了反对票还没解释，1 号你给个理由？"
+✗ "经综合分析，作为玩家我认为 5 号同志的提名行为存在一定疑点，值得我们审慎考量。" ← 千万别这样
+
+═══════ 🎯 最后再强调一次（最重要的 5 条）══════════
+1. **谈自己用"我"**——不要说"${speaker.seatLabel}觉得"或"作为玩家我..."（你就是${speaker.seatLabel}！）
+2. **必须引用真实数据**——前面玩家说了什么、上几轮谁失败、几张失败票
+3. **必须给明确立场**——支持/反对/重选，绝不能说"再看看""不好说"
+4. **跟别人齐头并进**——别人分析 150 字你也要 80-150 字
+5. **不许骂人/攻击**——禁用"垃圾""脑残""蠢"，"这逼"作为口语轻度调侃 OK，但别恶意人身`;
+    }
+    // 🆕 阶段 5：字节豆包 Doubao 风格强化
+    if (provider === "doubao") {
+      return `
+
+═══════ ⚠️ 风格强制约束（字节豆包 Doubao 必读）══════════
+**Doubao 风格偏年轻化、接地气——但阿瓦隆是中世纪桌游氛围！别破坏沉浸感！**
+**最大问题：爱用"绝绝子""xswl""家人们""yyds""集美们"等现代网络梗。**
+
+【硬要求】
+1. **保持桌游气场**：阿瓦隆背景是中世纪亚瑟王时代的圆桌——不是直播间也不是抖音。发言要像**朋友间紧张的桌游嘴炮**，不是"家人们看我推理"。
+2. **第一人称浸入**：你**就是**【${speaker.seatLabel}】，桌游里的发言要直接、有立场。
+3. **完整推理链**：有"因为 X → 所以 Y"的具体逻辑链。
+4. **引用具体事实**：至少 2 个具体玩家行为/投票/任务结果。
+5. **接地气可以，但不出圈**：东北话/京片子/口头禅 OK，但**别用网络爆梗**——那破坏氛围。
+6. **回应别人**：消化【刚才大家说的】里其他玩家观点。
+
+【绝对禁止】
+- ❌ 现代网络梗："绝绝子""yyds""xswl""绷不住了""典""急""乐""破防""抽象""shr""牛蛙"
+- ❌ 直播间口头禅："家人们""老铁们""集美们""宝子们""oc"
+- ❌ 短视频用语："这操作""这家伙""真人 NPC""人机"
+- ❌ 开场套话："咱来分析一下""听我说""说真的"
+- ❌ 装小可爱："本宝宝""人家""这位"
+- ❌ 表情符号过度：emoji 一局最多 1-2 个
+
+【正面示范】
+✓ "我直接反对这队。3 号上轮带 5 号挂了，这轮 1 号又给 3 号上车——这俩要么有勾连要么 1 号也没视野，反正不能上。"
+✓ "听 4 号说 6 号像梅林——你这视角哪儿来的？说说理由我才信。"
+✗ "家人们听我说！3 号绝绝子有问题，上轮带 5 号挂了 yyds，这操作真离谱 xswl" ← 完全不行
+
+═══════ 🎯 最后再强调一次（最重要的 5 条）══════════
+1. **谈自己用"我"**——不要说"${speaker.seatLabel}觉得"
+2. **必须引用真实数据**——前面玩家说了什么、上几轮谁失败、几张失败票
+3. **必须给明确立场**——支持/反对/重选，绝不能说"再看看""不好说"
+4. **跟别人齐头并进**——别人分析 150 字你也要 80-150 字
+5. **保持桌游氛围**——不是直播间不是短视频，禁现代网络梗`;
+    }
+    // 🆕 阶段 5：百川 Baichuan 风格强化
+    if (provider === "baichuan") {
+      return `
+
+═══════ ⚠️ 风格强制约束（百川 Baichuan 必读）══════════
+**Baichuan 文学功底强——但桌游不是写小说！别铺陈、别抒情、别诗意！**
+**最大问题：爱用文学修辞、长句、复杂从句，把发言写成散文。**
+
+【硬要求】
+1. **桌游辩论 ≠ 散文**：每句话都要**直接服务于推理或表态**，不要环境描写、心理描写、抒情。
+2. **结论先行**：开头第一句就给态度（"我反对/我支持/我重选"），后面才是理由。**绝对不要先铺垫情境再绕到结论**。
+3. **短句优先**：用句号断开多个短句，不要一句话套一句话用逗号连出长句。
+4. **第一人称浸入**：你就是【${speaker.seatLabel}】——别"望着圆桌上的诸位""心中如沸水翻腾"这种描写。
+5. **完整推理链 + 具体事实**：依然要"因为 X → 所以 Y" + 至少 2 个具体玩家行为。
+6. **回应别人**：吸收【刚才大家说的】，直接同意/反驳。
+
+【绝对禁止】
+- ❌ 文学修辞："如鲠在喉""百思不得其解""恍如隔世""暗流涌动""扑朔迷离""波谲云诡"
+- ❌ 抒情铺陈："看着场上各位的反应""我心里明白""说实话此刻我..."
+- ❌ 古风：文言/半文言（"窃以为""不才认为""愚以为""然则"）
+- ❌ 长句嵌套：用 3 个以上逗号才到句号——拆成短句
+- ❌ 心理描写："我犹豫了一下""略一沉思""暗自盘算"
+- ❌ 排比/对仗："不是 A 而是 B；不是 X 而是 Y"——这是对联不是辩论
+
+【正面示范】
+✓ "我反对。3 号上轮在失败队。这轮 5 号还要带 3 号——5 号要么没视野要么是搭子。换人。"
+✓ "1 号刚说 3 号干净，但你举不出理由。我不信。3 号到目前为止两次任务都参与，且都失败，这够格被怀疑了。"
+✗ "看着场上诸位起伏不定的态度，我心中如沸水翻腾，3 号同志的种种行径着实令人费解，他在第一轮的失败、在第二轮的支持，无不指向一个令人不安的可能..." ← 完全不行，散文体
+
+═══════ 🎯 最后再强调一次（最重要的 5 条）══════════
+1. **谈自己用"我"**——不要说"${speaker.seatLabel}觉得"
+2. **结论先行**——第一句就表态，不要文学铺垫
+3. **短句**——用句号断开，不要长句嵌套
+4. **必须引用真实数据**——前面玩家说了什么、上几轮谁失败、几张失败票
+5. **跟别人齐头并进**——别人分析 150 字你也要 80-150 字`;
+    }
     return ""; // DeepSeek 默认不加
   })();
 
@@ -3249,7 +3683,9 @@ ${game.assistMode === "auto" ? `═══ 输出格式（重要！必须严格�
   }, {
     role: "user",
     content: userMsg
-  }], 800);
+  }], 800, {
+    seatId: speaker.id
+  });
   if (!text) throw new Error("empty response");
 
   // 检查跟前 2 条发言的相似度，太相似就重试一次
@@ -3264,7 +3700,9 @@ ${game.assistMode === "auto" ? `═══ 输出格式（重要！必须严格�
     }, {
       role: "user",
       content: retryUserMsg
-    }], 800);
+    }], 800, {
+      seatId: speaker.id
+    });
     if (retry && !isTooSimilar(retry, lastTwo)) text = retry;
   }
 
@@ -3651,12 +4089,25 @@ function notifyApiFail(errMsg) {
   if (_apiFailCallback) _apiFailCallback(errMsg);
 }
 async function aiSpeak(speaker, game, situation, useAPI) {
+  // 🆕 检查座位是否标记为"本地预设"——如果是，直接走 fallback 不调 API
+  const seatCfg = getSeatModels()[speaker.id];
+  if (seatCfg && seatCfg.provider === "__local__") {
+    const r = fallbackSpeech(speaker, game, situation);
+    return {
+      ...r,
+      thinking: r.thinking || generateLocalThinking(speaker, game, situation, r.stance)
+    };
+  }
   if (useAPI && getDSKey()) {
     try {
       return await aiSpeakViaAPI(speaker, game, situation);
     } catch (e) {
-      console.warn("DeepSeek failed:", e.message);
-      notifyApiFail(e.message); // 通知 UI
+      // 🆕 详细告诉用户：哪个座位、哪个厂商、哪个模型挂了
+      const sm = getModelForSeat(speaker.id);
+      const providerLabel = PROVIDERS[sm.provider]?.label || sm.provider;
+      const detailMsg = `${speaker.seatLabel}（${providerLabel} · ${sm.model}）调用失败：${e.message?.slice(0, 100) || "未知错误"}`;
+      console.warn("AI failed:", detailMsg);
+      notifyApiFail(detailMsg);
       const r = fallbackSpeech(speaker, game, situation);
       return {
         ...r,
@@ -3755,15 +4206,17 @@ ${keyMoments}
 - 通用经验要从**本局的具体片段**提炼，而不是套用桌游常识
 - 直接出 4 段正文，不加其他格式`;
 
+  // 🆕 阶段 3：复盘自动从已配 Key 的模型里挑最快的（不再死写 deepseek-v4-flash）
+  const fastest = pickFastestModel();
   // 复盘强制用 chat 模型（reasoner 推理过程会占大量 token，复盘用不到推理），加大 token，提高温度避免雷同
   const result = await callDeepSeek([{
     role: "user",
     content: prompt
   }], 2000, {
-    model: "deepseek-v4-flash",
+    provider: fastest.provider,
+    model: fastest.model,
     temperature: 0.85
-  } // 0.7→0.85，增加多样性
-  );
+  });
   if (!result || result.trim().length < 20) {
     throw new Error("AI 返回内容为空或过短");
   }
@@ -3795,13 +4248,15 @@ ${recap ? `\n复盘内容：\n${recap}\n` : ""}
 经验:xxx
 画像:xxx`;
   try {
+    const fastest = pickFastestModel();
     const result = await callDeepSeek([{
       role: "user",
       content: prompt
     }], 400, {
-      model: "deepseek-v4-flash",
+      provider: fastest.provider,
+      model: fastest.model,
       temperature: 0.7
-    } // 强制走便宜模型
+    } // 用最快模型生成总结
     );
     const lines = result.trim().split("\n").filter(l => l.trim());
     let lesson = "",
@@ -3880,11 +4335,13 @@ ${isSpeechSituation ? `**格式（务必精简）**：
 
 直接输出，不要前缀。`;
   try {
+    const fastest = pickFastestModel();
     return await callDeepSeek([{
       role: "user",
       content: prompt
     }], 400, {
-      model: "deepseek-v4-flash",
+      provider: fastest.provider,
+      model: fastest.model,
       temperature: 0.7
     });
   } catch (e) {
@@ -3910,9 +4367,14 @@ function loadSavesList() {
 function saveGame(game) {
   if (!game) return;
   try {
+    // 🆕 存档前自动同步 seatModels 快照——保证续盘时配置一致
+    const gameWithSnapshot = {
+      ...game,
+      seatModelsSnapshot: getSeatModels()
+    };
     const list = loadSavesList();
-    const idx = list.findIndex(g => g.createdAt === game.createdAt);
-    if (idx >= 0) list[idx] = game;else list.unshift(game);
+    const idx = list.findIndex(g => g.createdAt === gameWithSnapshot.createdAt);
+    if (idx >= 0) list[idx] = gameWithSnapshot;else list.unshift(gameWithSnapshot);
     if (list.length > 10) list.length = 10; // 最多 10 个未完成存档
     localStorage.setItem(SAVES_KEY, JSON.stringify(list));
   } catch {}
@@ -4162,6 +4624,30 @@ function App() {
           saved.assistMode = "self"; // 当前没 API，临时玩 self
         } else {
           saved.assistMode = orig; // 否则恢复原模式
+        }
+        // 🆕 还原本局的 seatModels 快照
+        if (saved.seatModelsSnapshot && typeof saved.seatModelsSnapshot === "object") {
+          // 检查每个座位的 Key 是否还在；如果 Key 没了，自动改成本地预设
+          const restored = {};
+          let removedKeyCount = 0;
+          Object.entries(saved.seatModelsSnapshot).forEach(([sid, cfg]) => {
+            if (cfg.provider === "__local__") {
+              restored[sid] = cfg;
+            } else if (cfg.provider && getKeyFor(cfg.provider)) {
+              restored[sid] = cfg;
+            } else {
+              // Key 不存在了——降级为本地预设
+              restored[sid] = {
+                provider: "__local__",
+                model: "__local__"
+              };
+              removedKeyCount++;
+            }
+          });
+          setSeatModels(restored);
+          if (removedKeyCount > 0) {
+            alert(`📜 续盘提示：本局有 ${removedKeyCount} 个 AI 玩家原本配置的厂商 Key 已删除——已自动改为本地预设台词。\n\n如果想恢复 AI，请回开始页 → ⚙ AI 设置 重新填 Key 后再续盘。`);
+          }
         }
         setGame(saved);
         setStage("playing");
@@ -4505,7 +4991,7 @@ function TutorialPanel({
     style: {
       color: "#88b070"
     }
-  }, "\u2699 AI \u8BBE\u7F6E"), " \u6309\u94AE\uFF0C\u91CC\u9762\u63D0\u4F9B ", /*#__PURE__*/React.createElement("b", null, "4 \u5BB6"), "\u5927\u6A21\u578B\u53EF\u9009\uFF1A", /*#__PURE__*/React.createElement("div", {
+  }, "\u2699 AI \u8BBE\u7F6E"), " \u6309\u94AE\uFF0C\u91CC\u9762\u63D0\u4F9B ", /*#__PURE__*/React.createElement("b", null, "7 \u5BB6"), "\u5927\u6A21\u578B\u53EF\u9009\uFF1A", /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10,
       padding: "10px 14px",
@@ -4527,6 +5013,27 @@ function TutorialPanel({
       lineHeight: 1.7
     }
   }, "\u6E05\u534E\u56E2\u961F\uFF0C\u4E2D\u6587\u6700\u5F3A\u3002", /*#__PURE__*/React.createElement("b", null, "GLM-4-Flash \u6C38\u4E45\u514D\u8D39"), "\uFF01\u5B9E\u540D\u8BA4\u8BC1\u518D\u9001 500 \u4E07 Token\u3002")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      padding: "10px 14px",
+      borderRadius: 6,
+      border: "1px solid rgba(216,132,60,0.5)",
+      background: "rgba(216,132,60,0.1)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e6b450",
+      fontSize: 13,
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, "\uD83D\uDFE0 \u963F\u91CC\u901A\u4E49\uFF08\u4E2A\u4EBA\u5F00\u53D1\u8005\u6700\u53CB\u597D\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e8d8a8",
+      fontSize: 12,
+      lineHeight: 1.7
+    }
+  }, "\u963F\u91CC\u4E91 Qwen \u7CFB\u5217\u3002", /*#__PURE__*/React.createElement("b", null, "\u65B0\u7528\u6237\u6BCF\u4E2A\u6A21\u578B\u9001\u5343\u4E07\u7EA7\u514D\u8D39 token\uFF0C90 \u5929\u6709\u6548"), "\u3002\u5F00\u901A\u5373\u7528\uFF0COpenAI \u517C\u5BB9\u3002")), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 8,
       padding: "10px 14px",
@@ -4562,13 +5069,13 @@ function TutorialPanel({
       fontWeight: 600,
       marginBottom: 4
     }
-  }, "\uD83C\uDD93 \u767E\u5EA6\u5343\u5E06\uFF08\u4E5F\u514D\u8D39\uFF09"), /*#__PURE__*/React.createElement("div", {
+  }, "\uD83C\uDD93 \u767E\u5EA6\u5343\u5E06\uFF08\u6709\u514D\u8D39\u989D\u5EA6\uFF09"), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "#e8d8a8",
       fontSize: 12,
       lineHeight: 1.7
     }
-  }, "\u5B9E\u540D\u540E\u9001\u514D\u8D39\u989D\u5EA6\u3002\u9009 ", /*#__PURE__*/React.createElement("b", null, "X1 Turbo 32K"), " \u6A21\u578B\u53EF\u76F4\u63A5\u514D\u8D39\u73A9\u3002")), /*#__PURE__*/React.createElement("div", {
+  }, "\u5B9E\u540D\u540E\u9001\u514D\u8D39\u989D\u5EA6\u3002\u9009 ", /*#__PURE__*/React.createElement("b", null, "X1 Turbo 32K"), " \u6A21\u578B\u53EF\u76F4\u63A5\u514D\u8D39\u73A9\u3002\u4E5F\u53EF\u9009 ", /*#__PURE__*/React.createElement("b", null, "ERNIE 5.0"), "\uFF08\u65D7\u8230\uFF09\u3002")), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 8,
       padding: "10px 14px",
@@ -4583,24 +5090,100 @@ function TutorialPanel({
       fontWeight: 600,
       marginBottom: 4
     }
-  }, "\uD83D\uDC33 Kimi\uFF08\u4E2D\u6587\u6700\u5730\u9053\uFF09"), /*#__PURE__*/React.createElement("div", {
+  }, "\uD83C\uDF19 Kimi\uFF08\u4E2D\u6587\u6700\u5730\u9053\uFF09"), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "#e8d8a8",
       fontSize: 12,
       lineHeight: 1.7
     }
-  }, /*#__PURE__*/React.createElement("b", null, "\u9700\u8981\u5145\u503C"), "\uFF08\u6700\u4F4E \xA51\uFF09\u3002\u4E2D\u6587\u6700\u5730\u9053\uFF0C\u53D1\u8A00\u98CE\u683C\u6700\u63A5\u8FD1\u771F\u4EBA\u3002")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, "\u9700\u8981\u5145\u503C"), "\uFF08\u6700\u4F4E \xA51\uFF09\u3002\u4E2D\u6587\u6700\u5730\u9053\uFF0C\u53D1\u8A00\u98CE\u683C\u6700\u63A5\u8FD1\u771F\u4EBA\u3002", /*#__PURE__*/React.createElement("b", null, "K2.5 / K2.6"), " \u662F\u6700\u65B0\u63A8\u7406\u65D7\u8230\u3002")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      padding: "10px 14px",
+      borderRadius: 6,
+      border: "1px solid rgba(200,72,56,0.4)",
+      background: "rgba(200,72,56,0.06)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e8a098",
+      fontSize: 13,
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, "\uD83D\uDD34 \u5B57\u8282\u8C46\u5305\uFF08\u4EF7\u683C\u4FBF\u5B9C\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e8d8a8",
+      fontSize: 12,
+      lineHeight: 1.7
+    }
+  }, "\u706B\u5C71\u5F15\u64CE Doubao \u7CFB\u5217\u3002", /*#__PURE__*/React.createElement("b", null, "\u4EF7\u683C\u6BD4 OpenAI \u4FBF\u5B9C 10 \u500D"), "\u3002\u6CE8\u610F\u6BCF\u4E2A\u6A21\u578B\u8981\u53BB\u6A21\u578B\u5E7F\u573A\u5355\u72EC\"\u5F00\u901A\"\u518D\u7528\u3002")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      padding: "10px 14px",
+      borderRadius: 6,
+      border: "1px solid rgba(122,72,120,0.4)",
+      background: "rgba(122,72,120,0.06)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#c8a8d8",
+      fontSize: 13,
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, "\uD83D\uDFE3 \u767E\u5DDD Baichuan\uFF08\u4E2D\u6587\u5199\u4F5C\u6700\u81EA\u7136\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e8d8a8",
+      fontSize: 12,
+      lineHeight: 1.7
+    }
+  }, "\u767E\u5DDD\u667A\u80FD\u3002", /*#__PURE__*/React.createElement("b", null, "\u65B0\u7528\u6237\u5B9E\u540D\u9001 80 \u5143\u4EE3\u91D1\u5238"), "\uFF0C\u80FD\u73A9\u5F88\u591A\u5C40\u3002AI \u73A9\u5BB6\u53D1\u8A00\u6587\u5B66\u6027\u6700\u597D\u3002")), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 12,
       padding: 10,
-      background: "rgba(230,180,80,0.1)",
-      border: "1px solid rgba(230,180,80,0.4)",
+      background: "rgba(216,132,60,0.12)",
+      border: "1px solid rgba(216,132,60,0.5)",
       borderRadius: 4,
       fontSize: 12,
       color: "#e6b450",
       lineHeight: 1.7
     }
-  }, "\u2699 ", /*#__PURE__*/React.createElement("b", null, "\u540C\u4E00\u65F6\u95F4\u53EA\u80FD\u7528\u4E00\u5BB6"), "\u2014\u2014AI \u8BBE\u7F6E\u9762\u677F\u91CC\u9009\u54EA\u5BB6\u5C31\u7528\u54EA\u5BB6\uFF0C4 \u5BB6\u4E0D\u4F1A\u540C\u65F6\u542F\u7528\u3002"), /*#__PURE__*/React.createElement("div", {
+  }, "\uD83C\uDFB2 ", /*#__PURE__*/React.createElement("b", null, "\u65B0\u529F\u80FD \xB7 \u81EA\u7531\u642D\u914D\u591A\u4E2A AI"), "\uFF1A\u53EF\u4EE5\u586B\u591A\u5BB6 Key\uFF0C\u7136\u540E\u5728", /*#__PURE__*/React.createElement("b", null, "\u300C\uD83C\uDFB2 \u9AD8\u7EA7 \xB7 \u6BCF\u4E2A AI \u73A9\u5BB6\u5355\u72EC\u9009\u6A21\u578B\u300D"), "\u91CC\u7ED9\u6BCF\u4E2A AI \u73A9\u5BB6\u914D\u4E0D\u540C\u5382\u5546+\u6A21\u578B\u2014\u2014\u4E00\u684C AI \u8DE8\u5BB6\u8FA9\u8BBA\uFF0C\u4F53\u9A8C\u6700\u6709\u8DA3\u3002", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\uD83D\uDCDC \u4E5F\u53EF\u4EE5\u9009\u300C\u672C\u5730\u9884\u8BBE\u53F0\u8BCD\u300D"), "\uFF1A\u67D0\u4E2A AI \u73A9\u5BB6\u4E0D\u63A5\u5927\u6A21\u578B\u3001\u8D70\u9884\u5236\u53F0\u8BCD\u3002\u6BD4\u5982\u60F3\u8BA9 5 \u4E2A AI \u667A\u80FD\u30013 \u4E2A AI \u8D70\u9884\u8BBE\u8282\u7701 token\uFF0C\u81EA\u7531\u7EC4\u5408\u3002", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\uD83C\uDFAF \u4E09\u4E2A\u5FEB\u6377\u6309\u94AE"), "\uFF1A", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#a8d4a8"
+    }
+  }, "\u300C\uD83D\uDD04 \u5168\u90E8\u7528\u5F53\u524D\u6A21\u578B\u300D"), "\u2014\u2014 6 \u4E2A AI \u90FD\u7528\u540C\u4E00\u5BB6\uFF1B", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#d8843c"
+    }
+  }, "\u300C\uD83C\uDFB2 \u968F\u673A\u642D\u914D\u300D"), "\u2014\u2014 \u4ECE\u4F60\u5DF2\u5F00\u901A\u7684\u5382\u5546\u91CC\u968F\u673A\u5206\u914D\uFF08\u4E0D\u542B\u672C\u5730\u9884\u8BBE\uFF09\uFF1B", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#a8a058"
+    }
+  }, "\u300C\u2717 \u6E05\u7A7A\u300D"), "\u2014\u2014 \u5168\u90E8\u56DE\u5230\u5168\u5C40\u9ED8\u8BA4\u3002", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u26A0\uFE0F \u6A21\u5F0F\u5207\u6362\u6CE8\u610F"), "\uFF1A \u300C\u81EA\u5DF1\u73A9\u300D/\u300CAI \u5EFA\u8BAE\u300D\u65F6\u914D\u7F6E\u73A9\u5BB6 2-N\uFF08N-1 \u4E2A AI\uFF09\uFF1B \u300CAI \u4EE3\u7406\u300D\u65F6\u914D\u7F6E\u73A9\u5BB6 1-N\uFF08N \u4E2A AI\uFF0C\u73A9\u5BB6 1 \u4EE3\u4F60\uFF09\u3002 \u5207\u6362\u6A21\u5F0F\u540E\u7CFB\u7EDF\u4F1A\u63D0\u9192\u4F60\u91CD\u65B0\u68C0\u67E5\u914D\u7F6E\u3002"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      padding: 10,
+      background: "rgba(136,176,112,0.1)",
+      border: "1px solid rgba(136,176,112,0.4)",
+      borderRadius: 4,
+      fontSize: 12,
+      color: "#a8d4a8",
+      lineHeight: 1.7
+    }
+  }, "\uD83D\uDCB0 ", /*#__PURE__*/React.createElement("b", null, "\u4EF7\u683C\u6863\u4F4D"), "\uFF1A\u6BCF\u4E2A\u6A21\u578B\u90FD\u6807\u4E86 \uD83C\uDD93 \u6C38\u4E45\u514D\u8D39 / \uD83D\uDFE2 \u4FBF\u5B9C\uFF08\u6BCF\u5C40\u51E0\u5206\u94B1\uFF09/ \uD83D\uDCB8 \u7A0D\u8D35\uFF08\u6BCF\u5C40\u51E0\u6BDB\uFF09/ \uD83D\uDC8E \u8D35\uFF08\u6BCF\u5C40 \xA51+\uFF09\uFF0C\u6309\u9884\u7B97\u9009\u3002"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      padding: 10,
+      background: "rgba(91,143,191,0.08)",
+      border: "1px solid rgba(91,143,191,0.4)",
+      borderRadius: 4,
+      fontSize: 12,
+      color: "#a8c4ff",
+      lineHeight: 1.7
+    }
+  }, "\uD83D\uDE80 ", /*#__PURE__*/React.createElement("b", null, "\u590D\u76D8\u548C AI \u5EFA\u8BAE\u81EA\u52A8\u6311\u6700\u5FEB\u6A21\u578B"), "\uFF1A\u590D\u76D8\u548C AI \u5EFA\u8BAE\u4F1A\u4ECE\u4F60\u5DF2\u5F00\u901A\u7684 Key \u91CC\u81EA\u52A8\u9009\u6700\u5FEB\u7684\u6A21\u578B\u751F\u6210\uFF08\u901F\u5EA6\u4F18\u5148 + \u4EF7\u683C\u4FBF\u5B9C\u4F18\u5148\uFF09\uFF0C\u4E0D\u7528\u4F60\u624B\u52A8\u914D\u7F6E\u3002"), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 8,
       padding: 10,
@@ -5234,6 +5817,282 @@ function RoleCard({
     }
   }, "\uD83D\uDCCB ", /*#__PURE__*/React.createElement("b", null, "\u600E\u4E48\u73A9\uFF1A"), howTo));
 }
+
+// 🆕 每个 AI 玩家单独选品牌+模型——按钮弹出 Modal
+function PerSeatModelPanel({
+  playerCount,
+  assistMode
+}) {
+  const [open, setOpen] = useState(false);
+  const [tick, setTick] = useState(0);
+  const seatModels = getSeatModels();
+  const isProxyMode = assistMode === "auto";
+  const aiSeatIds = [];
+  for (let i = 0; i < playerCount; i++) {
+    if (isProxyMode || i !== 0) aiSeatIds.push(i);
+  }
+  const availableProviders = Object.entries(PROVIDERS).filter(([pid]) => getKeyFor(pid));
+  const configuredCount = aiSeatIds.filter(id => seatModels[id]).length;
+  function setSeat(seatId, providerVal, modelVal) {
+    const obj = {
+      ...getSeatModels()
+    };
+    if (!providerVal && !modelVal) {
+      delete obj[seatId];
+    } else {
+      obj[seatId] = {
+        provider: providerVal,
+        model: modelVal
+      };
+    }
+    setSeatModels(obj);
+    setTick(t => t + 1);
+  }
+
+  // 🆕 显式标记某座位为"本地预设"——和"用全局默认"区分
+  function setSeatLocal(seatId) {
+    const obj = {
+      ...getSeatModels()
+    };
+    obj[seatId] = {
+      provider: "__local__",
+      model: "__local__"
+    };
+    setSeatModels(obj);
+    setTick(t => t + 1);
+  }
+  function applyAllToCurrent() {
+    const cur = {
+      provider: getProvider(),
+      model: getDSModel()
+    };
+    const obj = {};
+    aiSeatIds.forEach(id => {
+      obj[id] = cur;
+    });
+    setSeatModels(obj);
+    setTick(t => t + 1);
+  }
+  function randomMix() {
+    // 🎲 随机搭配——只在已开通 Key 的厂商里随机，**不**包含本地预设
+    const obj = {};
+    aiSeatIds.forEach(id => {
+      const [pid, cfg] = availableProviders[Math.floor(Math.random() * availableProviders.length)];
+      const candidates = cfg.models.filter(m => m.cost !== "expensive" && m.id !== "glm-z1-flash");
+      const m = candidates.length > 0 ? candidates[Math.floor(Math.random() * candidates.length)] : cfg.models[0];
+      obj[id] = {
+        provider: pid,
+        model: m.id
+      };
+    });
+    setSeatModels(obj);
+    setTick(t => t + 1);
+  }
+  function clearAll() {
+    setSeatModels({});
+    setTick(t => t + 1);
+  }
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "mt-3 pt-3",
+    style: {
+      borderTop: "1px solid rgba(90,72,56,0.5)"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setOpen(true),
+    className: "w-full text-left flex items-center justify-between py-2 px-3 rounded",
+    style: {
+      background: "rgba(216,132,60,0.12)",
+      border: "1px solid rgba(216,132,60,0.4)",
+      color: "#e6b450",
+      fontSize: 12,
+      letterSpacing: "0.1em"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "\uD83C\uDFB2 \u9AD8\u7EA7 \xB7 \u6BCF\u4E2A AI \u73A9\u5BB6\u5355\u72EC\u9009\u6A21\u578B"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: "#a8a058"
+    }
+  }, configuredCount > 0 ? `已配 ${configuredCount}/${aiSeatIds.length}` : "全部用全局默认", " \u2192"))), open && /*#__PURE__*/React.createElement("div", {
+    onClick: () => setOpen(false),
+    style: {
+      position: "fixed",
+      inset: 0,
+      zIndex: 1000,
+      background: "rgba(0,0,0,0.7)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: {
+      maxWidth: 560,
+      width: "100%",
+      maxHeight: "85vh",
+      background: "linear-gradient(180deg, #1f1820 0%, #15101a 100%)",
+      border: "2px solid #e6b450",
+      borderRadius: 8,
+      display: "flex",
+      flexDirection: "column",
+      boxShadow: "0 12px 48px rgba(0,0,0,0.6)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "14px 16px",
+      borderBottom: "1px solid rgba(230,180,80,0.3)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e6b450",
+      fontSize: 14,
+      fontWeight: 600,
+      letterSpacing: "0.1em"
+    }
+  }, "\uD83C\uDFB2 \u6BCF\u4E2A AI \u73A9\u5BB6\u5355\u72EC\u9009\u6A21\u578B"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setOpen(false),
+    style: {
+      width: 28,
+      height: 28,
+      border: "none",
+      background: "transparent",
+      color: "#a8a058",
+      fontSize: 18,
+      cursor: "pointer",
+      padding: 0
+    }
+  }, "\xD7")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      overflowY: "auto",
+      padding: "14px 16px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-xs mb-3",
+    style: {
+      color: "#a8a058",
+      lineHeight: 1.6
+    }
+  }, "\uD83D\uDCA1 \u9ED8\u8BA4\u6240\u6709 AI \u7528\u4E0A\u9762\"\u6A21\u578B\u9009\u62E9\"\u91CC\u9009\u7684\u5168\u5C40\u6A21\u578B\u3002\u8FD9\u91CC\u53EF\u4EE5\u4E3A\u6BCF\u4E2A AI \u5355\u72EC\u6307\u5B9A\u4E0D\u540C\u54C1\u724C+\u6A21\u578B\u2014\u2014\u9009\u91CD\u590D\u7684\u4E5F\u884C\uFF0C\u4E3B\u6253\u81EA\u7531\u642D\u914D\u3002"), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2 mb-3 flex-wrap"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: applyAllToCurrent,
+    className: "text-xs py-1.5 px-2 border rounded",
+    style: {
+      borderColor: "#88b070",
+      background: "rgba(136,176,112,0.15)",
+      color: "#88b070",
+      cursor: "pointer"
+    }
+  }, "\uD83D\uDD04 \u5168\u90E8\u7528\u5F53\u524D\u6A21\u578B"), /*#__PURE__*/React.createElement("button", {
+    onClick: randomMix,
+    className: "text-xs py-1.5 px-2 border rounded",
+    style: {
+      borderColor: "#d8843c",
+      background: "rgba(216,132,60,0.15)",
+      color: "#d8843c",
+      cursor: "pointer"
+    }
+  }, "\uD83C\uDFB2 \u968F\u673A\u642D\u914D"), /*#__PURE__*/React.createElement("button", {
+    onClick: clearAll,
+    className: "text-xs py-1.5 px-2 border rounded",
+    style: {
+      borderColor: "#5a4838",
+      background: "transparent",
+      color: "#a8a058",
+      cursor: "pointer"
+    }
+  }, "\u2717 \u6E05\u7A7A\uFF08\u5168\u7528\u5168\u5C40\u9ED8\u8BA4\uFF09")), /*#__PURE__*/React.createElement("div", {
+    className: "space-y-2"
+  }, aiSeatIds.map(seatId => {
+    const cfg = seatModels[seatId];
+    const curProvider = cfg?.provider || "";
+    const curModel = cfg?.model || "";
+    const isLocal = curProvider === "__local__";
+    return /*#__PURE__*/React.createElement("div", {
+      key: seatId,
+      className: "flex items-center gap-2 p-2 rounded",
+      style: {
+        background: "rgba(0,0,0,0.25)"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        minWidth: 80,
+        fontSize: 11,
+        color: "#e6b450",
+        fontWeight: 600
+      }
+    }, seatId === 0 && isProxyMode ? "🤖 玩家1（代你）" : `🤖 玩家${seatId + 1}`), /*#__PURE__*/React.createElement("select", {
+      value: isLocal ? "__local__" : curProvider,
+      onChange: e => {
+        const newP = e.target.value;
+        if (!newP) {
+          setSeat(seatId, null, null);
+          return;
+        }
+        if (newP === "__local__") {
+          setSeatLocal(seatId);
+          return;
+        }
+        const firstModel = PROVIDERS[newP].models[0].id;
+        setSeat(seatId, newP, firstModel);
+      },
+      style: {
+        flex: 1,
+        fontSize: 11,
+        padding: "5px 6px",
+        background: isLocal ? "rgba(80,72,56,0.6)" : "rgba(26,14,26,0.7)",
+        color: isLocal ? "#a88858" : curProvider ? "#e8d8a8" : "#a8a058",
+        border: "1px solid #5a4838",
+        borderRadius: 3
+      }
+    }, /*#__PURE__*/React.createElement("option", {
+      value: ""
+    }, "\u2014 \u7528\u5168\u5C40\u9ED8\u8BA4 \u2014"), /*#__PURE__*/React.createElement("option", {
+      value: "__local__"
+    }, "\uD83D\uDCDC \u672C\u5730\u9884\u8BBE\u53F0\u8BCD\uFF08\u4E0D\u63A5 AI\uFF09"), availableProviders.map(([pid, pcfg]) => /*#__PURE__*/React.createElement("option", {
+      key: pid,
+      value: pid
+    }, pcfg.label))), !isLocal && curProvider && PROVIDERS[curProvider] && /*#__PURE__*/React.createElement("select", {
+      value: curModel,
+      onChange: e => setSeat(seatId, curProvider, e.target.value),
+      style: {
+        flex: 1.5,
+        fontSize: 11,
+        padding: "5px 6px",
+        background: "rgba(26,14,26,0.7)",
+        color: "#e8d8a8",
+        border: "1px solid #5a4838",
+        borderRadius: 3
+      }
+    }, PROVIDERS[curProvider].models.map(m => /*#__PURE__*/React.createElement("option", {
+      key: m.id,
+      value: m.id
+    }, m.name))));
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "10px 16px",
+      borderTop: "1px solid rgba(90,72,56,0.5)",
+      display: "flex",
+      justifyContent: "flex-end"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setOpen(false),
+    style: {
+      padding: "8px 18px",
+      fontSize: 12,
+      letterSpacing: "0.1em",
+      border: "1px solid #e6b450",
+      borderRadius: 3,
+      background: "rgba(230,180,80,0.15)",
+      color: "#e8d8a8",
+      cursor: "pointer"
+    }
+  }, "\u5B8C\u6210")))));
+}
 function Setup({
   playerCount,
   setPlayerCount,
@@ -5271,6 +6130,7 @@ function Setup({
   const [dsModelLocal, setDsModelLocal] = useState(getDSModel());
   const [preflightChecking, setPreflightChecking] = useState(false);
   const [preflightError, setPreflightError] = useState(null);
+  const [assistModeWarning, setAssistModeWarning] = useState(null); // 🆕 模式切换后的提醒
 
   // 🔒 渲染保险：如果 providerLocal 不知怎么变成 undefined，回退到 deepseek
   const safeProviderLocal = PROVIDERS[providerLocal] ? providerLocal : "deepseek";
@@ -5293,6 +6153,43 @@ function Setup({
       setAssistMode("self");
     }
   }, [useAPI]);
+
+  // 🆕 监听 assistMode / playerCount 变化——如果之前配过 seatModels，提醒用户检查
+  useEffect(() => {
+    const sm = getSeatModels();
+    if (Object.keys(sm).length === 0) {
+      setAssistModeWarning(null);
+      return;
+    }
+
+    // 计算当前模式下应该有的 AI 座位
+    const isProxy = assistMode === "auto";
+    const expectedSeatIds = new Set();
+    for (let i = 0; i < playerCount; i++) {
+      if (isProxy || i !== 0) expectedSeatIds.add(i);
+    }
+    const configuredSeatIds = new Set(Object.keys(sm).map(Number));
+
+    // 检查：有没有"应该配置但没配置"的座位（玩家1代理时最常见）
+    const missing = [...expectedSeatIds].filter(id => !configuredSeatIds.has(id));
+    // 检查：有没有"已配置但当前模式下不需要"的座位（比如代理切自己玩，玩家1的配置就用不上）
+    const extra = [...configuredSeatIds].filter(id => !expectedSeatIds.has(id));
+    if (missing.length > 0 || extra.length > 0) {
+      const modeLabel = assistMode === "auto" ? "AI 代理" : assistMode === "advice" ? "AI 建议" : "自己玩";
+      let msg = `⚠️ 当前是「${modeLabel}」模式（${playerCount} 人局）—— `;
+      if (missing.length > 0 && extra.length > 0) {
+        msg += `有 ${missing.length} 个 AI 玩家没单独配置（会用全局默认），${extra.length} 个旧配置不再使用。`;
+      } else if (missing.length > 0) {
+        msg += `有 ${missing.length} 个 AI 玩家还没单独配置（会用全局默认）。`;
+      } else {
+        msg += `${extra.length} 个旧的座位配置在本模式下不再使用（不影响游戏）。`;
+      }
+      msg += "建议去「🎲 高级 · 每个 AI 玩家单独选模型」检查一下。";
+      setAssistModeWarning(msg);
+    } else {
+      setAssistModeWarning(null);
+    }
+  }, [assistMode, playerCount]);
   async function testKey() {
     if (!apiInput.trim()) return;
     setApiTesting(true);
@@ -5525,11 +6422,11 @@ function Setup({
       color: "#a8c4d8",
       lineHeight: 1.6
     }
-  }, "\uD83D\uDCA1 ", /*#__PURE__*/React.createElement("b", null, "AI \u8BBE\u7F6E\u662F\u5E72\u5565\u7684\uFF1F"), /*#__PURE__*/React.createElement("br", null), "\u586B\u4E86 Key \u4E4B\u540E\uFF0CAI \u73A9\u5BB6\u5C31\u7531\u771F\u6B63\u7684\u5927\u6A21\u578B\u9A71\u52A8\uFF0C\u53D1\u8A00\u63A8\u7406\u50CF\u771F\u4EBA\uFF1B\u4E0D\u586B\u7528\u672C\u5730\u9884\u8BBE\u53F0\u8BCD\u4E5F\u80FD\u73A9\u3002", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u56DB\u5BB6\u53EF\u9009"), "\uFF1A", /*#__PURE__*/React.createElement("b", {
+  }, "\uD83D\uDCA1 ", /*#__PURE__*/React.createElement("b", null, "AI \u8BBE\u7F6E\u662F\u5E72\u5565\u7684\uFF1F"), /*#__PURE__*/React.createElement("br", null), "\u586B\u4E86 Key \u4E4B\u540E\uFF0CAI \u73A9\u5BB6\u5C31\u7531\u771F\u6B63\u7684\u5927\u6A21\u578B\u9A71\u52A8\uFF0C\u53D1\u8A00\u63A8\u7406\u50CF\u771F\u4EBA\uFF1B\u4E0D\u586B\u7528\u672C\u5730\u9884\u8BBE\u53F0\u8BCD\u4E5F\u80FD\u73A9\u3002", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u4E03\u5BB6\u53EF\u9009"), "\uFF1A", /*#__PURE__*/React.createElement("b", {
     style: {
       color: "#88b070"
     }
-  }, "\u667A\u8C31 GLM-4-Flash \u6C38\u4E45\u514D\u8D39"), "\uFF08\u9996\u63A8 0 \u6210\u672C\uFF09\uFF1B\u767E\u5EA6\u5343\u5E06\u6709\u514D\u8D39\u989D\u5EA6\uFF1BDeepSeek \u63A8\u7406\u6700\u5F3A\u3001Kimi \u4E2D\u6587\u6700\u5730\u9053\uFF08\u8FD9\u4E24\u5BB6\u9700\u5145\u503C\uFF09\u3002", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u540C\u4E00\u65F6\u95F4\u53EA\u80FD\u7528\u4E00\u5BB6"), "\uFF0C\u4E0B\u9762\u9009\u54EA\u5BB6\u5C31\u7528\u54EA\u5BB6\u3002"), /*#__PURE__*/React.createElement("div", {
+  }, "\u667A\u8C31 GLM-4-Flash \u6C38\u4E45\u514D\u8D39"), "\uFF08\u9996\u63A8 0 \u6210\u672C\uFF09\uFF1B\u963F\u91CC\u901A\u4E49\u3001\u767E\u5EA6\u5343\u5E06\u90FD\u6709\u514D\u8D39\u989D\u5EA6\uFF1BDeepSeek \u63A8\u7406\u6700\u5F3A\u3001Kimi\u3001\u8C46\u5305\u3001\u767E\u5DDD\u4E2D\u6587\u6700\u5730\u9053\uFF08\u9700\u5145\u503C\uFF09\u3002", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u540C\u4E00\u65F6\u95F4\u53EA\u80FD\u7528\u4E00\u5BB6"), "\uFF0C\u4E0B\u9762\u9009\u54EA\u5BB6\u5C31\u7528\u54EA\u5BB6\u3002"), /*#__PURE__*/React.createElement("div", {
     className: "text-xs mb-3 p-2 rounded",
     style: {
       background: "rgba(200,72,56,0.1)",
@@ -5554,15 +6451,21 @@ function Setup({
         fontSize: 10.5,
         color: "#88a878"
       }
-    }, "\xB7 AI \u8D8A\u73A9\u8D8A\u61C2\u4F60\u7684\u73A9\u6CD5\u548C\u8FD9\u684C\u7684\u7B56\u7565\u8D70\u5411"));
-  })(), /*#__PURE__*/React.createElement("div", {
+    }, "\xB7 AI \u8D8A\u73A9\u8D8A\u61C2\u4F60\u7684\u73A9\u6CD5\u548C\u8FD9\u684C\u7684\u7B56\u7565\u8D70\u5411\u3002\u6BCF\u5C40\u590D\u76D8\u540E\u4ECE\u684C\u6E38\u7B56\u7565\u4E2D\u63D0\u70BC 1 \u6761\u7ECF\u9A8C\u5165\u5E93\uFF08\u6EE1 15 \u6761\u66FF\u6362\u6700\u65E7\u7684\uFF09\uFF1B\u540C\u540D\u73A9\u5BB6\u7684\u753B\u50CF\u6700\u591A\u8BB0 5 \u6761"));
+  })(), Object.keys(PROVIDERS).filter(pid => getKeyFor(pid)).length > 0 && useAPI && /*#__PURE__*/React.createElement(PerSeatModelPanel, {
+    playerCount: playerCount,
+    assistMode: assistMode
+  }), /*#__PURE__*/React.createElement("div", {
     className: "text-xs uppercase mb-2",
     style: {
       color: "#d8843c",
       letterSpacing: "0.2em"
     }
   }, "\u9009\u62E9 AI \u63D0\u4F9B\u5546"), /*#__PURE__*/React.createElement("div", {
-    className: "grid grid-cols-3 gap-2 mb-3"
+    className: "grid grid-cols-2 gap-2 mb-3",
+    style: {
+      gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))"
+    }
   }, Object.entries(PROVIDERS).map(([pid, cfg]) => /*#__PURE__*/React.createElement("button", {
     key: pid,
     onClick: () => switchProvider(pid),
@@ -5614,7 +6517,7 @@ function Setup({
       color: "#e6b450",
       lineHeight: 1.6
     }
-  }, "\u2139\uFE0F \u4F60\u5DF2\u7ECF\u586B\u8FC7\u591A\u5BB6 Key\uFF0C", /*#__PURE__*/React.createElement("b", null, "\u5F53\u524D\u53EA\u7528 ", currentProvider.label), "\u3002\u5176\u4ED6\u5BB6 Key \u4FDD\u7559\u7740\u4F46\u4E0D\u6FC0\u6D3B\u3002"), /*#__PURE__*/React.createElement("div", {
+  }, "\u2139\uFE0F \u4F60\u5DF2\u7ECF\u586B\u8FC7\u591A\u5BB6 Key\u2014\u2014", /*#__PURE__*/React.createElement("b", null, "\u300C\u5168\u5C40\u6A21\u578B\u300D\u7528 ", currentProvider.label), "\uFF0C\u4F46\u4F60\u4E5F\u53EF\u4EE5\u5728\u4E0B\u65B9\u300C\uD83C\uDFB2 \u9AD8\u7EA7 \xB7 \u6BCF\u4E2A AI \u73A9\u5BB6\u5355\u72EC\u9009\u6A21\u578B\u300D\u91CC\u7ED9\u4E0D\u540C AI \u914D\u4E0D\u540C\u5382\u5546+\u6A21\u578B\uFF0C\u4E3B\u6253\u81EA\u7531\u642D\u914D\u3002"), /*#__PURE__*/React.createElement("div", {
     className: "text-xs uppercase mb-2",
     style: {
       color: "#d8843c",
@@ -6075,7 +6978,376 @@ function Setup({
       fontSize: 11,
       color: "#e6b450"
     }
-  }, "\u26A0\uFE0F \u5176\u4ED6\u6A21\u578B\uFF08ERNIE 4.5 / X1.1 \u7B49\uFF09\u9700\u8981\u5355\u72EC\u6309\u91CF\u4ED8\u8D39\uFF0C\u6CA1\u6709\u514D\u8D39\u989D\u5EA6\u3002\u5EFA\u8BAE\u9ED8\u8BA4\u5C31\u7528 ", /*#__PURE__*/React.createElement("b", null, "X1 Turbo 32K"), "\u3002"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u26A0\uFE0F \u5176\u4ED6\u6A21\u578B\uFF08ERNIE 4.5 / X1.1 \u7B49\uFF09\u9700\u8981\u5355\u72EC\u6309\u91CF\u4ED8\u8D39\uFF0C\u6CA1\u6709\u514D\u8D39\u989D\u5EA6\u3002\u5EFA\u8BAE\u9ED8\u8BA4\u5C31\u7528 ", /*#__PURE__*/React.createElement("b", null, "X1 Turbo 32K"), "\u3002"))), providerLocal === "qwen" && /*#__PURE__*/React.createElement("details", {
+    style: {
+      marginBottom: 10,
+      padding: 10,
+      borderRadius: 6,
+      border: "1px solid rgba(216,132,60,0.3)",
+      background: "rgba(216,132,60,0.06)"
+    }
+  }, /*#__PURE__*/React.createElement("summary", {
+    style: {
+      cursor: "pointer",
+      color: "#e6b450",
+      fontSize: 12,
+      fontWeight: 600
+    }
+  }, "\uD83D\uDCD6 \u600E\u4E48\u83B7\u53D6\u963F\u91CC\u901A\u4E49 Key\uFF1F\uFF08\u4E2A\u4EBA\u5F00\u53D1\u8005\u6700\u53CB\u597D\xB7\u70B9\u5F00\u770B\u8BE6\u7EC6\u6559\u7A0B\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      fontSize: 12,
+      lineHeight: 1.8,
+      color: "#e8d8a8"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "1\uFE0F\u20E3 \u6CE8\u518C\u963F\u91CC\u4E91\u8D26\u53F7"), /*#__PURE__*/React.createElement("br", null), "\u6253\u5F00 ", /*#__PURE__*/React.createElement("a", {
+    href: "https://www.aliyun.com",
+    target: "_blank",
+    style: {
+      color: "#a8c4ff",
+      textDecoration: "underline"
+    }
+  }, "aliyun.com"), "\uFF0C\u7528", /*#__PURE__*/React.createElement("b", null, "\u6DD8\u5B9D/\u652F\u4ED8\u5B9D\u8D26\u53F7"), "\u5C31\u80FD\u767B\u5F55"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "2\uFE0F\u20E3 \u5B9E\u540D\u8BA4\u8BC1"), /*#__PURE__*/React.createElement("br", null), "\u53F3\u4E0A\u89D2\u5934\u50CF \u2192 ", /*#__PURE__*/React.createElement("b", null, "\"\u5B9E\u540D\u8BA4\u8BC1\""), " \u2192 \u5B8C\u6210", /*#__PURE__*/React.createElement("b", null, "\u4E2A\u4EBA\u5B9E\u540D\u8BA4\u8BC1"), "\uFF08\u652F\u4ED8\u5B9D\u5237\u8138\u5373\u53EF\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "3\uFE0F\u20E3 \u5F00\u901A\"\u767E\u70BC\"\u5E73\u53F0"), /*#__PURE__*/React.createElement("br", null), "\u8BBF\u95EE ", /*#__PURE__*/React.createElement("a", {
+    href: "https://bailian.console.aliyun.com",
+    target: "_blank",
+    style: {
+      color: "#a8c4ff",
+      textDecoration: "underline"
+    }
+  }, "bailian.console.aliyun.com"), /*#__PURE__*/React.createElement("br", null), "\u9996\u6B21\u767B\u5F55\u4F1A\u8BA9", /*#__PURE__*/React.createElement("b", null, "\u5F00\u901A\u670D\u52A1"), " \u2192 \u540C\u610F\u534F\u8BAE\u5373\u53EF\uFF08\u514D\u8D39\u5F00\u901A\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "4\uFE0F\u20E3 \u521B\u5EFA API Key"), /*#__PURE__*/React.createElement("br", null), "\u53F3\u4E0A\u89D2\u5934\u50CF \u2192 ", /*#__PURE__*/React.createElement("b", null, "\"API-KEY\""), " \u2192 \u70B9 ", /*#__PURE__*/React.createElement("b", null, "\"\u521B\u5EFA\u6211\u7684 API-KEY\""), /*#__PURE__*/React.createElement("br", null), "\u63CF\u8FF0\u968F\u4FBF\u586B\uFF08\u6BD4\u5982 avalon\uFF09\u2192 \u521B\u5EFA"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "5\uFE0F\u20E3 \u590D\u5236 Key"), /*#__PURE__*/React.createElement("br", null), "\u663E\u793A\u5F62\u5982 ", /*#__PURE__*/React.createElement("code", {
+    style: {
+      background: "rgba(0,0,0,0.3)",
+      padding: "1px 4px",
+      borderRadius: 2,
+      color: "#88b070",
+      fontSize: 10
+    }
+  }, "sk-xxxxxxxxxxxxxxxx"), "\uFF0C", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: "#c84838"
+    }
+  }, "\u7ACB\u523B\u590D\u5236\u4FDD\u5B58")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "6\uFE0F\u20E3 \u7C98\u8D34\u56DE\u8FD9\u91CC"), /*#__PURE__*/React.createElement("br", null), "\u586B\u5230\u4E0B\u9762 \u2192 \u9009\u6A21\u578B\uFF08\u63A8\u8350 ", /*#__PURE__*/React.createElement("b", null, "\uD83D\uDC8E Qwen-Plus"), "\uFF09\u2192 \u4FDD\u5B58\u5E76\u6D4B\u8BD5"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      padding: 8,
+      background: "rgba(136,176,112,0.15)",
+      borderRadius: 3,
+      fontSize: 11,
+      color: "#88b070"
+    }
+  }, "\uD83C\uDF81 ", /*#__PURE__*/React.createElement("b", null, "\u65B0\u7528\u6237\u798F\u5229"), "\uFF1A\u6BCF\u4E2A\u6A21\u578B\u9001 ", /*#__PURE__*/React.createElement("b", null, "\u767E\u4E07\u5230\u5343\u4E07\u7EA7\u522B\u514D\u8D39 Token"), "\uFF0C90 \u5929\u6709\u6548\u671F\uFF01", /*#__PURE__*/React.createElement("br", null), "\uD83D\uDC8E ", /*#__PURE__*/React.createElement("b", null, "\u4E2A\u4EBA\u5F00\u53D1\u8005\u6700\u53CB\u597D"), "\uFF1A\u4E0D\u9700\u8981\u4F01\u4E1A\u8BA4\u8BC1\uFF0C\u5F00\u901A\u5373\u7528\u3002"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      padding: 8,
+      background: "rgba(230,180,80,0.1)",
+      borderRadius: 3,
+      fontSize: 11,
+      color: "#e6b450"
+    }
+  }, "\uD83D\uDCA1 ", /*#__PURE__*/React.createElement("b", null, "\u9009\u6A21\u578B\u5EFA\u8BAE"), "\uFF1A\u65E5\u5E38\u7528 Qwen-Plus\uFF08\u6027\u4EF7\u6BD4\u6700\u9AD8\uFF09\uFF1B\u60F3\u8981\u6700\u5F3A\u63A8\u7406\u7528 Qwen3.6-Max-Preview\uFF1B\u9884\u7B97\u7D27\u5F20\u7528 Qwen-Turbo\uFF08\u6781\u4FBF\u5B9C\uFF09"))), providerLocal === "doubao" && /*#__PURE__*/React.createElement("details", {
+    style: {
+      marginBottom: 10,
+      padding: 10,
+      borderRadius: 6,
+      border: "1px solid rgba(200,72,56,0.3)",
+      background: "rgba(200,72,56,0.06)"
+    }
+  }, /*#__PURE__*/React.createElement("summary", {
+    style: {
+      cursor: "pointer",
+      color: "#e8a098",
+      fontSize: 12,
+      fontWeight: 600
+    }
+  }, "\uD83D\uDCD6 \u600E\u4E48\u83B7\u53D6\u5B57\u8282\u8C46\u5305 Key\uFF1F\uFF08\u70B9\u5F00\u770B\u8BE6\u7EC6\u6559\u7A0B\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      fontSize: 12,
+      lineHeight: 1.8,
+      color: "#e8d8a8"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10,
+      padding: 8,
+      background: "rgba(230,180,80,0.12)",
+      borderRadius: 3,
+      color: "#e6b450",
+      lineHeight: 1.6
+    }
+  }, "\u26A0\uFE0F ", /*#__PURE__*/React.createElement("b", null, "\u8C46\u5305\u6D41\u7A0B\u6BD4\u8F83\u7ED5"), "\uFF0C\u6709\u4E24\u4E2A Key \u6982\u5FF5\uFF0C\u770B\u6E05\u695A\uFF01", /*#__PURE__*/React.createElement("br", null), "\u2022 ", /*#__PURE__*/React.createElement("b", null, "API Key"), "\uFF08\u4EE5 ", /*#__PURE__*/React.createElement("code", {
+    style: {
+      color: "#88b070"
+    }
+  }, "ark-xxxx"), " \u5F00\u5934\uFF09\u2192 \u8FD9\u4E2A\u662F\u4F60\u8981\u586B\u5230\u8FD9\u91CC\u7684", /*#__PURE__*/React.createElement("br", null), "\u2022 ", /*#__PURE__*/React.createElement("b", null, "\u63A5\u5165\u70B9 ID"), "\uFF08\u4EE5 ", /*#__PURE__*/React.createElement("code", {
+    style: {
+      color: "#88b070"
+    }
+  }, "ep-xxxx"), " \u5F00\u5934\uFF09\u2192 \u8FD9\u662F\u6A21\u578B ID"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "1\uFE0F\u20E3 \u6CE8\u518C\u706B\u5C71\u5F15\u64CE"), /*#__PURE__*/React.createElement("br", null), "\u6253\u5F00 ", /*#__PURE__*/React.createElement("a", {
+    href: "https://www.volcengine.com",
+    target: "_blank",
+    style: {
+      color: "#a8c4ff",
+      textDecoration: "underline"
+    }
+  }, "volcengine.com"), "\uFF0C\u7528\u624B\u673A\u53F7\u6CE8\u518C"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "2\uFE0F\u20E3 \u5B9E\u540D\u8BA4\u8BC1"), /*#__PURE__*/React.createElement("br", null), "\u5B8C\u6210", /*#__PURE__*/React.createElement("b", null, "\u4E2A\u4EBA\u5B9E\u540D\u8BA4\u8BC1"), "\uFF08\u4E0D\u7528\u4F01\u4E1A\u8BA4\u8BC1\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "3\uFE0F\u20E3 \u5F00\u901A\u65B9\u821F\u670D\u52A1"), /*#__PURE__*/React.createElement("br", null), "\u8BBF\u95EE ", /*#__PURE__*/React.createElement("a", {
+    href: "https://console.volcengine.com/ark",
+    target: "_blank",
+    style: {
+      color: "#a8c4ff",
+      textDecoration: "underline"
+    }
+  }, "\u706B\u5C71\u65B9\u821F\u63A7\u5236\u53F0"), " \u2192 \u9996\u6B21\u8FDB\u5165\u5F00\u901A\u670D\u52A1"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10,
+      padding: 8,
+      border: "2px solid #c84838",
+      borderRadius: 4,
+      background: "rgba(200,72,56,0.12)"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#ff8888",
+      fontWeight: 600
+    }
+  }, "4\uFE0F\u20E3 \u3010\u5173\u952E\u3011\u5F00\u901A\u6A21\u578B \u2190\u5FC5\u987B\u505A\uFF01"), /*#__PURE__*/React.createElement("br", null), "\u5DE6\u4FA7 ", /*#__PURE__*/React.createElement("b", null, "\"\u6A21\u578B\u5E7F\u573A\""), " \u2192 \u627E\u5230 ", /*#__PURE__*/React.createElement("b", null, "Doubao-Seed-2.0-Lite"), "\uFF08\u6216\u4F60\u60F3\u7528\u7684\u578B\u53F7\uFF09\u2192 \u70B9 ", /*#__PURE__*/React.createElement("b", null, "\"\u7ACB\u5373\u5F00\u901A\""), /*#__PURE__*/React.createElement("br", null), "\u2192 \u9605\u8BFB\u534F\u8BAE\u3001\u52FE\u9009\u540C\u610F \u2192 ", /*#__PURE__*/React.createElement("b", null, "\"\u5F00\u901A\""), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#88b070",
+      fontSize: 11
+    }
+  }, "\u2705 \u5F00\u901A\u514D\u8D39\uFF0C\u53EA\u5728\u8C03\u7528\u65F6\u6309 token \u4ED8\u8D39"), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#ff8888",
+      fontSize: 11,
+      fontWeight: 600
+    }
+  }, "\u274C \u4E0D\u5F00\u901A\u4F1A\u62A5 \"ModelNotOpen\" \u9519\u8BEF\uFF01\u6BCF\u4E2A\u60F3\u7528\u7684\u6A21\u578B\u90FD\u8981\u5355\u72EC\u5F00\u901A\uFF01")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "5\uFE0F\u20E3 \u521B\u5EFA API Key"), /*#__PURE__*/React.createElement("br", null), "\u5DE6\u4FA7 ", /*#__PURE__*/React.createElement("b", null, "\"API Key \u7BA1\u7406\""), " \u2192 ", /*#__PURE__*/React.createElement("b", null, "\"\u521B\u5EFA API Key\""), /*#__PURE__*/React.createElement("br", null), "\u663E\u793A\u5F62\u5982 ", /*#__PURE__*/React.createElement("code", {
+    style: {
+      background: "rgba(0,0,0,0.3)",
+      padding: "1px 4px",
+      borderRadius: 2,
+      color: "#88b070",
+      fontSize: 10
+    }
+  }, "ark-xxxxxxxx-xxxx-xxxx-xxxx"), "\uFF0C", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: "#c84838"
+    }
+  }, "\u7ACB\u523B\u590D\u5236\u4FDD\u5B58")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "6\uFE0F\u20E3 \u7C98\u8D34\u56DE\u8FD9\u91CC"), /*#__PURE__*/React.createElement("br", null), "\u586B API Key\uFF08", /*#__PURE__*/React.createElement("b", null, "\u5C31\u662F ark- \u5F00\u5934\u90A3\u4E32"), "\uFF09\u2192 \u9009\u6A21\u578B\uFF08doubao-seed-2-0-lite\uFF09\u2192 \u4FDD\u5B58\u5E76\u6D4B\u8BD5", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#88b070",
+      fontSize: 11
+    }
+  }, "\u6CE8\uFF1A\u706B\u5C71\u5F15\u64CE\u7ED9\u7684 curl \u4F8B\u5B50\u91CC\u7684 Bearer \u540E\u9762\u90A3\u4E32\u5C31\u662F Key")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      padding: 8,
+      background: "rgba(136,176,112,0.15)",
+      borderRadius: 3,
+      fontSize: 11,
+      color: "#88b070"
+    }
+  }, "\uD83D\uDCB0 ", /*#__PURE__*/React.createElement("b", null, "\u4EF7\u683C\u4FBF\u5B9C"), "\uFF1A\u8C46\u5305 Mini \xA50.2/M tokens\uFF0C\u6BD4 OpenAI \u4FBF\u5B9C 10 \u500D"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      padding: 8,
+      background: "rgba(200,72,56,0.1)",
+      borderRadius: 3,
+      fontSize: 11,
+      color: "#e8a098"
+    }
+  }, "\u26A0\uFE0F ", /*#__PURE__*/React.createElement("b", null, "\u5ACC\u9EBB\u70E6\uFF1F"), "\u5EFA\u8BAE\u7528", /*#__PURE__*/React.createElement("b", null, "\u963F\u91CC\u901A\u4E49"), "\uFF08\u5F00\u901A\u5373\u7528\uFF0C\u514D\u8D39\u989D\u5EA6\u5927\uFF09\uFF0C\u6216", /*#__PURE__*/React.createElement("b", null, "\u667A\u8C31 GLM-4-Flash"), "\uFF08\u6C38\u4E45\u514D\u8D39\uFF09"))), providerLocal === "baichuan" && /*#__PURE__*/React.createElement("details", {
+    style: {
+      marginBottom: 10,
+      padding: 10,
+      borderRadius: 6,
+      border: "1px solid rgba(122,72,120,0.3)",
+      background: "rgba(122,72,120,0.06)"
+    }
+  }, /*#__PURE__*/React.createElement("summary", {
+    style: {
+      cursor: "pointer",
+      color: "#c8a8d8",
+      fontSize: 12,
+      fontWeight: 600
+    }
+  }, "\uD83D\uDCD6 \u600E\u4E48\u83B7\u53D6\u767E\u5DDD Baichuan Key\uFF1F\uFF08\u70B9\u5F00\u770B\u8BE6\u7EC6\u6559\u7A0B\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      fontSize: 12,
+      lineHeight: 1.8,
+      color: "#e8d8a8"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "1\uFE0F\u20E3 \u6CE8\u518C\u8D26\u53F7"), /*#__PURE__*/React.createElement("br", null), "\u6253\u5F00 ", /*#__PURE__*/React.createElement("a", {
+    href: "https://platform.baichuan-ai.com",
+    target: "_blank",
+    style: {
+      color: "#a8c4ff",
+      textDecoration: "underline"
+    }
+  }, "platform.baichuan-ai.com"), "\uFF0C\u7528\u624B\u673A\u53F7\u6CE8\u518C"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "2\uFE0F\u20E3 \u5B9E\u540D\u8BA4\u8BC1"), /*#__PURE__*/React.createElement("br", null), "\u53F3\u4E0A\u89D2\u5934\u50CF \u2192 ", /*#__PURE__*/React.createElement("b", null, "\"\u8D26\u6237\u7BA1\u7406\""), " \u2192 \u5B8C\u6210", /*#__PURE__*/React.createElement("b", null, "\u4E2A\u4EBA\u5B9E\u540D\u8BA4\u8BC1")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "3\uFE0F\u20E3 \u521B\u5EFA API Key"), /*#__PURE__*/React.createElement("br", null), "\u5DE6\u4FA7 ", /*#__PURE__*/React.createElement("b", null, "\"API Key \u7BA1\u7406\""), " \u2192 \u70B9 ", /*#__PURE__*/React.createElement("b", null, "\"\u521B\u5EFA API Key\""), /*#__PURE__*/React.createElement("br", null), "\u540D\u5B57\u968F\u4FBF\uFF08\u6BD4\u5982 avalon\uFF09\u2192 \u521B\u5EFA"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "4\uFE0F\u20E3 \u590D\u5236 Key"), /*#__PURE__*/React.createElement("br", null), "\u663E\u793A\u5F62\u5982 ", /*#__PURE__*/React.createElement("code", {
+    style: {
+      background: "rgba(0,0,0,0.3)",
+      padding: "1px 4px",
+      borderRadius: 2,
+      color: "#88b070",
+      fontSize: 10
+    }
+  }, "sk-xxxxxxxxxxxx"), "\uFF0C", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: "#c84838"
+    }
+  }, "\u7ACB\u523B\u590D\u5236\u4FDD\u5B58")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "5\uFE0F\u20E3 \u7C98\u8D34\u56DE\u8FD9\u91CC"), /*#__PURE__*/React.createElement("br", null), "\u586B\u5230\u4E0B\u9762 \u2192 \u9009\u6A21\u578B\uFF08\u63A8\u8350 ", /*#__PURE__*/React.createElement("b", null, "\u26A1 Baichuan4-Turbo"), "\uFF09\u2192 \u4FDD\u5B58\u5E76\u6D4B\u8BD5"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      padding: 8,
+      background: "rgba(136,176,112,0.15)",
+      borderRadius: 3,
+      fontSize: 11,
+      color: "#88b070"
+    }
+  }, "\uD83C\uDF81 ", /*#__PURE__*/React.createElement("b", null, "\u65B0\u7528\u6237\u798F\u5229"), "\uFF1A\u5B9E\u540D\u540E\u9001 ", /*#__PURE__*/React.createElement("b", null, "80 \u5143\u4EE3\u91D1\u5238"), "\uFF0C\u80FD\u73A9\u5F88\u591A\u5F88\u591A\u5C40"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      padding: 8,
+      background: "rgba(122,72,120,0.1)",
+      borderRadius: 3,
+      fontSize: 11,
+      color: "#c8a8d8"
+    }
+  }, "\uD83D\uDC8E ", /*#__PURE__*/React.createElement("b", null, "\u767E\u5DDD\u7684\u5F3A\u9879"), "\uFF1A\u4E2D\u6587\u6587\u5B66\u6027\u3001\u5199\u4F5C\u6D41\u7545\u6027\u3002AI \u73A9\u5BB6\u53D1\u8A00\u4F1A\u66F4\u81EA\u7136"))), /*#__PURE__*/React.createElement("div", {
     className: "relative mb-2"
   }, /*#__PURE__*/React.createElement("input", {
     type: showKey ? "text" : "password",
@@ -6167,6 +7439,14 @@ function Setup({
       letterSpacing: "0.2em"
     }
   }, "\u6A21\u578B\u9009\u62E9"), /*#__PURE__*/React.createElement("div", {
+    className: "text-xs mb-2 p-2 rounded",
+    style: {
+      background: "rgba(26,14,26,0.5)",
+      border: "1px solid rgba(90,72,56,0.4)",
+      color: "#a8a058",
+      lineHeight: 1.6
+    }
+  }, "\uD83D\uDCB0 ", /*#__PURE__*/React.createElement("b", null, "\u4EF7\u683C\u6863\u4F4D"), "\uFF1A\uD83C\uDD93 \u6C38\u4E45\u514D\u8D39/\u6709\u514D\u8D39\u989D\u5EA6 \xB7 \uD83D\uDFE2 \u4FBF\u5B9C\uFF08\u6BCF\u5C40\u51E0\u5206\u94B1\uFF09\xB7 \uD83D\uDCB8 \u7A0D\u8D35\uFF08\u6BCF\u5C40\u51E0\u6BDB\uFF09\xB7 \uD83D\uDC8E \u8D35\uFF08\u6BCF\u5C40 \xA51+\uFF09", /*#__PURE__*/React.createElement("br", null), "\u26A1 ", /*#__PURE__*/React.createElement("b", null, "\u901F\u5EA6\u6863\u4F4D"), "\uFF1A\u26A1 \u6781\u901F \xB7 \uD83D\uDCA8/\uD83D\uDCAC/\uD83D\uDC8E \u5FEB \xB7 \uD83C\uDF1F \u4E2D\u7B49 \xB7 \uD83E\uDDE0 \u6162\uFF08\u63A8\u7406\u6A21\u578B\uFF09"), /*#__PURE__*/React.createElement("div", {
     className: "grid gap-2",
     style: {
       gridTemplateColumns: currentProvider.models.length <= 2 ? "1fr 1fr" : "1fr 1fr 1fr"
@@ -6203,7 +7483,7 @@ function Setup({
     style: {
       color: "#a8a058"
     }
-  }, providerLocal === "deepseek" && "💡 Chat 默认推荐快又便宜；Reasoner 更聪明但每次发言慢 5-15 秒", providerLocal === "qianfan" && "💡 X1 Turbo 32K 有免费额度，新用户首选；其他模型需付费", providerLocal === "kimi" && "💡 K1 8K 默认便宜快；K1 32K 上下文更长，适合长对局", providerLocal === "zhipu" && "💡 推荐 GLM-4-Flash（永久免费 + 最快）！Z1-Flash 是推理模型说话慢，Plus 是付费旗舰"))), showSaves && savesList && savesList.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, providerLocal === "deepseek" && "💡 Chat 默认推荐快又便宜；Reasoner 更聪明但每次发言慢 5-15 秒", providerLocal === "qianfan" && "💡 X1 Turbo 32K 有免费额度，新用户首选；其他模型需付费", providerLocal === "kimi" && "💡 K1 8K 默认便宜快；K1 32K 上下文更长，适合长对局", providerLocal === "zhipu" && "💡 推荐 GLM-4-Flash（永久免费 + 最快）！Z1-Flash 是推理模型说话慢，Plus 是付费旗舰", providerLocal === "qwen" && "💡 推荐 Qwen-Plus（性价比最高）；新用户用 Qwen-Turbo / Qwen-Flash 走免费额度", providerLocal === "doubao" && "💡 推荐 Doubao Seed 2.0 Lite（性价比好）。每个想用的模型都要在火山引擎模型广场单独「开通」", providerLocal === "baichuan" && "💡 推荐 Baichuan4-Turbo（极速）；Baichuan4 写作最强但稍贵"))), showSaves && savesList && savesList.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "mb-4 p-4 rounded border-2",
     style: {
       borderColor: "#e6b450",
@@ -6486,11 +7766,35 @@ function Setup({
     style: {
       color: "#a8a058"
     }
-  }, assistMode === "self" && "亲自发言、投票、做任务", assistMode === "advice" && "轮到你时 AI 给一段建议，你最终自己决定", assistMode === "auto" && "AI 替你玩，你只看不点", !useAPI && (assistMode === "advice" || assistMode === "auto") && /*#__PURE__*/React.createElement("span", {
+  }, assistMode === "self" && "亲自发言、投票、做任务", assistMode === "advice" && "轮到你时 AI 给一段建议，你最终自己决定", assistMode === "auto" && "AI 替你玩，你只看不点", !useAPI && assistMode === "self" && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#88b070"
+    }
+  }, " \xB7 \uD83D\uDCDC \u6CA1\u63A5\u5165 AI\u2014\u2014\u5176\u4ED6\u73A9\u5BB6\u7528\u672C\u5730\u9884\u8BBE\u53F0\u8BCD\uFF0C\u53D1\u8A00\u6BD4\u8F83\u6A21\u677F\u5316\u4F46\u80FD\u73A9"), !useAPI && (assistMode === "advice" || assistMode === "auto") && /*#__PURE__*/React.createElement("span", {
     style: {
       color: "#c84838"
     }
-  }, " \xB7 \u5F53\u524D\u6A21\u5F0F\u9700\u8981\u542F\u7528 AI\uFF0C\u8BF7\u5148\u5728\u300C\u2699 AI \u8BBE\u7F6E\u300D\u914D\u7F6E"))), /*#__PURE__*/React.createElement("div", {
+  }, " \xB7 \u5F53\u524D\u6A21\u5F0F\u9700\u8981\u542F\u7528 AI\uFF0C\u8BF7\u5148\u5728\u300C\u2699 AI \u8BBE\u7F6E\u300D\u914D\u7F6E\uFF08\u6216\u9009\u300C\u81EA\u5DF1\u73A9\u300D\u7528\u672C\u5730\u9884\u8BBE\u76F4\u63A5\u5F00\u5C40\uFF09")), assistModeWarning && /*#__PURE__*/React.createElement("div", {
+    className: "mt-2 p-2 rounded text-xs",
+    style: {
+      background: "rgba(216,132,60,0.12)",
+      border: "1px solid rgba(216,132,60,0.5)",
+      color: "#e6b450",
+      lineHeight: 1.6
+    }
+  }, assistModeWarning, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setAssistModeWarning(null),
+    style: {
+      marginLeft: 8,
+      fontSize: 10,
+      padding: "2px 8px",
+      background: "transparent",
+      border: "1px solid rgba(216,132,60,0.5)",
+      color: "#d8843c",
+      borderRadius: 3,
+      cursor: "pointer"
+    }
+  }, "\u77E5\u9053\u4E86"))), /*#__PURE__*/React.createElement("div", {
     className: "border p-3 text-xs leading-relaxed rounded",
     style: {
       borderColor: "#c89838",
@@ -8584,10 +9888,12 @@ function Play({
       color: "#ffaa88",
       marginBottom: 2
     }
-  }, "\u26A0\uFE0F AI \u672A\u63A5\u5165 \xB7 \u5DF2\u4F7F\u7528\u672C\u5730\u9884\u8BBE\u53F0\u8BCD"), /*#__PURE__*/React.createElement("div", {
+  }, "\u26A0\uFE0F \u67D0\u4E2A AI \u73A9\u5BB6\u8C03\u7528\u5931\u8D25 \xB7 \u5DF2\u4E34\u65F6\u6539\u7528\u672C\u5730\u9884\u8BBE\u53F0\u8BCD"), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "#e8a098",
-      fontSize: 12
+      fontSize: 12,
+      fontFamily: "monospace",
+      wordBreak: "break-all"
     }
   }, apiWarning), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -8595,7 +9901,7 @@ function Play({
       fontSize: 11,
       marginTop: 4
     }
-  }, "\u5EFA\u8BAE\u56DE\u5F00\u59CB\u9875 \u2192 \u2699 AI \u8BBE\u7F6E \u6D4B\u8BD5 Key \u6216\u66F4\u6362\u6A21\u578B")), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDCA1 \u89E3\u51B3\u65B9\u6CD5\uFF1A\u56DE\u5F00\u59CB\u9875 \u2192 \u2699 AI \u8BBE\u7F6E \u2192\u300C\uD83C\uDFB2 \u9AD8\u7EA7 \xB7 \u6BCF\u4E2A AI \u73A9\u5BB6\u5355\u72EC\u9009\u6A21\u578B\u300D\u68C0\u67E5\u8BE5\u5EA7\u4F4D\u7684\u5382\u5546\u548C\u6A21\u578B\uFF1B\u5E38\u89C1\u539F\u56E0\uFF1A", /*#__PURE__*/React.createElement("br", null), "\xB7 \u706B\u5C71\u8C46\u5305 ModelNotOpen \u2192 \u53BB\u6A21\u578B\u5E7F\u573A\u70B9\"\u7ACB\u5373\u5F00\u901A\"", /*#__PURE__*/React.createElement("br", null), "\xB7 \u963F\u91CC\u901A\u4E49\u67D0\u6A21\u578B 404 \u2192 \u8BE5\u6A21\u578B\u4E0D\u5728 OpenAI \u517C\u5BB9\u63A5\u53E3\u91CC\uFF0C\u6362 Plus / Max", /*#__PURE__*/React.createElement("br", null), "\xB7 \u4F59\u989D\u4E0D\u8DB3 \u2192 \u53BB\u5BF9\u5E94\u5E73\u53F0\u5145\u503C")), /*#__PURE__*/React.createElement("button", {
     onClick: () => setApiWarning(null),
     style: {
       background: "transparent",
@@ -8632,7 +9938,22 @@ function Play({
       fontSize: 10,
       letterSpacing: "0.3em"
     }
-  }, "Avalon \xB7 ", game.playerCount, " \u4EBA \xB7 ", game.assistMode === "auto" ? "AI代理" : game.assistMode === "advice" ? "建议模式" : "自己玩", " ", useAPI ? `· ${PROVIDERS[getProvider()]?.label || "AI"}已启用` : /*#__PURE__*/React.createElement("span", {
+  }, "Avalon \xB7 ", game.playerCount, " \u4EBA \xB7 ", game.assistMode === "auto" ? "AI代理" : game.assistMode === "advice" ? "建议模式" : "自己玩", useAPI ? (() => {
+    // 🆕 统计本局实际用到的厂商
+    const seatModels = getSeatModels();
+    const usedProviders = new Set();
+    game.players.forEach(p => {
+      if (p.isHuman) return;
+      const sm = seatModels[p.id];
+      if (sm && sm.provider) usedProviders.add(sm.provider);else usedProviders.add(getProvider());
+    });
+    if (usedProviders.size === 1) {
+      const pid = [...usedProviders][0];
+      return ` · ${PROVIDERS[pid]?.label || "AI"} 接入中`;
+    } else {
+      return ` · 多家 AI 协同（${usedProviders.size} 家）`;
+    }
+  })() : /*#__PURE__*/React.createElement("span", {
     style: {
       color: "#a88858"
     }
