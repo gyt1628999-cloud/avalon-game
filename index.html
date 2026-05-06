@@ -1422,6 +1422,33 @@ const PROVIDERS = {
       desc: "中等 · 长上下文"
     }],
     free: false
+  },
+  zhipu: {
+    label: "智谱GLM",
+    desc: "清华团队·中文强·有免费",
+    url: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    keyHint: "xxxxxxxx.xxxxxxxx",
+    site: "https://bigmodel.cn",
+    rechargeUrl: "https://bigmodel.cn/finance/recharge",
+    rechargeNote: "实名认证送 500 万 Token；GLM-4-Flash 永久免费！",
+    models: [{
+      id: "glm-4-flash",
+      name: "⚡ GLM-4-Flash",
+      desc: "✨ 永久免费 · 反应最快 · 强烈推荐"
+    }, {
+      id: "glm-z1-flash",
+      name: "🧠 GLM-Z1-Flash",
+      desc: "⚠️ 推理模型 · 思考慢 · 不推荐用于桌游"
+    }, {
+      id: "glm-4-air",
+      name: "💨 GLM-4-Air",
+      desc: "便宜 · 中文地道（付费）"
+    }, {
+      id: "glm-4-plus",
+      name: "🌟 GLM-4-Plus",
+      desc: "旗舰 · 推理最准（付费）"
+    }],
+    free: true
   }
 };
 const DS_KEY_STORAGE = "avalon_ds_key"; // DeepSeek key
@@ -1429,6 +1456,7 @@ const DS_MODEL_STORAGE = "avalon_ds_model"; // 当前选中模型
 const PROVIDER_STORAGE = "avalon_provider"; // 当前 provider
 const KIMI_KEY_STORAGE = "avalon_kimi_key"; // Kimi key
 const QF_KEY_STORAGE = "avalon_qf_key"; // 千帆 key
+const ZHIPU_KEY_STORAGE = "avalon_zhipu_key"; // 智谱 GLM key
 
 const getProvider = () => {
   try {
@@ -1450,6 +1478,7 @@ const getKeyFor = provider => {
   try {
     if (provider === "kimi") return localStorage.getItem(KIMI_KEY_STORAGE) || "";
     if (provider === "qianfan") return localStorage.getItem(QF_KEY_STORAGE) || "";
+    if (provider === "zhipu") return localStorage.getItem(ZHIPU_KEY_STORAGE) || "";
     return localStorage.getItem(DS_KEY_STORAGE) || "";
   } catch {
     return "";
@@ -1457,7 +1486,7 @@ const getKeyFor = provider => {
 };
 const setKeyFor = (provider, k) => {
   try {
-    const storage = provider === "kimi" ? KIMI_KEY_STORAGE : provider === "qianfan" ? QF_KEY_STORAGE : DS_KEY_STORAGE;
+    const storage = provider === "kimi" ? KIMI_KEY_STORAGE : provider === "qianfan" ? QF_KEY_STORAGE : provider === "zhipu" ? ZHIPU_KEY_STORAGE : DS_KEY_STORAGE;
     if (k) localStorage.setItem(storage, k);else localStorage.removeItem(storage);
   } catch {}
 };
@@ -1541,13 +1570,23 @@ async function callDeepSeek(messages, maxTokens = 400, opts = {}) {
         top_p: 0.9,
         frequency_penalty: 0.4,
         presence_penalty: 0.4
-      } // Kimi 长篇大论倾向，调低
+      },
+      // Kimi 长篇大论倾向，调低
+      zhipu: {
+        temperature: 0.95,
+        top_p: 0.95,
+        frequency_penalty: 0.2,
+        presence_penalty: 0.3
+      } // 智谱 GLM 倾向写得短——调高 temp 和降低 frequency_penalty 鼓励多说
     };
     const baseParams = PROVIDER_PARAMS[provider] || PROVIDER_PARAMS.deepseek;
+    // 🆕 轻量模型容易被截断——给它们更大的 max_tokens
+    const isLight = provider === "zhipu" || provider === "qianfan" || provider === "kimi";
+    const finalMaxTokens = isLight ? Math.max(maxTokens, 600) : maxTokens;
     const body = {
       model,
       messages,
-      max_tokens: maxTokens,
+      max_tokens: finalMaxTokens,
       temperature: opts.temperature !== undefined ? opts.temperature : baseParams.temperature,
       top_p: opts.top_p !== undefined ? opts.top_p : baseParams.top_p,
       frequency_penalty: baseParams.frequency_penalty,
@@ -2403,14 +2442,25 @@ async function aiSpeakViaAPI(speaker, game, situation) {
       return `${p.seatLabel}：上过 ${total} 次车（成功 ${ok} 次，失败 ${fail} 次）`;
     }).join("\n  ");
     const isFirstRoundOpening = game.round === 0 && game.voteRound === 0;
-    situationText = `你是本轮队长，你刚组完队，要给一段开场白解释为什么带这几个人。
+    situationText = `你是本轮队长（${speaker.seatLabel}），你刚组完队，要给一段开场白解释为什么带这几个人。
+
+🔴🔴🔴 **重要重要重要！你自己的身份**：
+- 你的座位号是【${speaker.seatLabel}】——你就是这个号
+- 谈到自己时**绝对用"我"**，绝对不能说"带 ${speaker.seatLabel}"（那是带自己——出戏）
+- ❌ 错误："我带 ${speaker.seatLabel} 和 ${(game.proposedTeam || []).filter(id => id !== speaker.id).map(id => game.players[id].seatLabel)[0] || "X号"}"（${speaker.seatLabel}是你自己！）
+- ❌ 错误："${speaker.seatLabel}是个老玩家"（你说自己像第三人称）
+- ✅ 正确："我自己也上车了，加上 ${(game.proposedTeam || []).filter(id => id !== speaker.id).map(id => game.players[id].seatLabel).join("、") || "其他人"}"
+- ✅ 正确："${(game.proposedTeam || []).includes(speaker.id) ? "我上车了" : "我没上车"}，带的是 ${(game.proposedTeam || []).filter(id => id !== speaker.id).map(id => game.players[id].seatLabel).join("、") || "（暂无）"}"
+
+🔴 **本轮带的人（除你自己外）**：${(game.proposedTeam || []).filter(id => id !== speaker.id).map(id => game.players[id].seatLabel).join("、") || "（无其他人，只有你自己）"}
+🔴 **你自己 ${(game.proposedTeam || []).includes(speaker.id) ? "在" : "不在"}车上**
+🔴 **总队伍人数**：${(game.proposedTeam || []).length} 人
 
 🔴 **绝对铁律**：
 - 你**自己就是队长**，是你亲自挑的人，不要说"X号是队长挑的"这种话
-- 你这次带的人是**【${(game.proposedTeam || []).map(id => game.players[id].seatLabel).join("、")}】共 ${(game.proposedTeam || []).length} 人**——只能讨论这几个号
-- **绝对不能提到不在队伍里的人作为"基础"或"已选"**！比如这次没带 5 号就不能说"基础选 5 号"——这是凭空捏造，会让所有人立刻怀疑你逻辑混乱
-- 解释这几个号的选人理由，逻辑要严密，每个被带的人都要简单提一下原因
-- ${(game.proposedTeam || []).includes(speaker.id) ? "你**自己也在车上**——这很正常（队长上车是常态），可以顺带说一句\"我自己也在车上担保\"" : "你**自己没上车**——这是非常规操作，要给一个有说服力的理由（比如\"我对自己有信心，但想看看其他人\"），不然会显得你在躲避责任"}
+- **绝对不能提到不在队伍里的人作为"基础"或"已选"**！比如这次没带 5 号就不能说"基础选 5 号"
+- 每个**被带的人（除自己）**要简单提一下原因
+- ${(game.proposedTeam || []).includes(speaker.id) ? "你**自己也在车上**——这很正常（队长上车是常态），可以说\"我自己也在车上担保\"" : "你**自己没上车**——这是非常规，要给一个有说服力的理由"}
 
 🔴 **被带玩家的精确上车记录（必须基于这个，不准瞎说！）**：
   ${teamMemberStats}
@@ -2617,13 +2667,26 @@ ${isSpeakerEvil ? `- 你是红方，可以适度反对（把车搅黄延缓游�
 
   // 三档长度——整体偏中长，因为要有完整推理链
   const lenRoll = Math.random();
+  // 🆕 轻量模型（智谱 Flash / 千帆 / Kimi）容易写太短——给它们设最低字数门槛
+  const provider = getProvider();
+  const isLightModel = provider === "zhipu" || provider === "qianfan" || provider === "kimi";
   let lengthHint;
   if (isFirstRound) {
     // 🆕 第 1 轮信息真的太少——可以发短水话甚至"无话可说"
-    lengthHint = lenRoll < 0.2 ? "60-100 字，给 1-2 个简单观察" : lenRoll < 0.6 ? "30-50 字，简短表态（第 1 轮真没啥可说的）" : "15-30 字，纯表态没问题（'还没信息，先看看吧'/'我跟一把'/'随便带几个，行'——真实玩家第 1 轮就这种水话）";
+    if (isLightModel) {
+      // 轻量模型即使第一轮也要 50 字以上——避免完全敷衍
+      lengthHint = lenRoll < 0.5 ? "50-100 字，给 1-2 个简单观察 + 表态" : "60-120 字，简短分析（第 1 轮信息少，但也要给观察+理由）";
+    } else {
+      lengthHint = lenRoll < 0.2 ? "60-100 字，给 1-2 个简单观察" : lenRoll < 0.6 ? "30-50 字，简短表态（第 1 轮真没啥可说的）" : "15-30 字，纯表态没问题（'还没信息，先看看吧'/'我跟一把'/'随便带几个，行'——真实玩家第 1 轮就这种水话）";
+    }
   } else {
     // 中后期信息多，必须铺开讲
-    lengthHint = lenRoll < 0.55 ? "120-180 字，引用 2-3 个具体玩家行为，给完整推理链（A → B → C → 结论）" : lenRoll < 0.85 ? "80-120 字，引用至少 1 个具体行为 + 推理" : "50-80 字，但必须给推理（不能空表态）";
+    if (isLightModel) {
+      // 轻量模型最低 80 字——避免短句敷衍
+      lengthHint = lenRoll < 0.6 ? "120-180 字，引用 2-3 个具体玩家行为，给完整推理链" : "80-150 字，至少 2 个具体引用 + 推理";
+    } else {
+      lengthHint = lenRoll < 0.55 ? "120-180 字，引用 2-3 个具体玩家行为，给完整推理链（A → B → C → 结论）" : lenRoll < 0.85 ? "80-120 字，引用至少 1 个具体行为 + 推理" : "50-80 字，但必须给推理（不能空表态）";
+    }
   }
 
   // === 注入"经验库"和"玩家画像"（伪学习机制）===
@@ -2680,6 +2743,21 @@ ${isSpeakerEvil ? `- 你是红方，可以适度反对（把车搅黄延缓游�
   };
   const myLore = ROLE_LORE[speaker.role] || "";
   const systemMsg = `🏰 ══════════ 阿瓦隆国度 · 王座之下 ══════════ 🏰
+
+⚡⚡⚡ **开局必读铁律（最重要的 8 条，违反任何一条都会让你出戏）** ⚡⚡⚡
+1. **你是 ${speaker.seatLabel}，谈自己用"我"**——绝不能说"${speaker.seatLabel}觉得"（出戏）。说别人才用号牌。
+2. **必须基于真实数据发言**——前面玩家说了什么、上几轮谁在哪个任务、失败票几张，全部要严格基于【场上信息】，不准瞎编。
+3. **必须给出明确立场**（支持/反对）+ 理由——绝不能说"我再看看""不好说"这种打太极的话。
+4. **发言要有内容、要够长**——80-200 字是普通范围，第一轮可短一点（40-80 字）。**绝不能说一句两句敷衍**。
+5. **引用别人时号牌要对**——本轮队长是【${game.players[game.leaderId].seatLabel}】，不是其他号。引用谁的发言就说谁，不要张冠李戴。
+6. **不要骂人不要攻击**——禁用"垃圾""脑残""蠢"等词，不爽用"我有疑问""逻辑没看懂"代替。
+7. **同阵营不要总互相支持**——红方频繁互保 = 暴露。要假装互不认识。
+8. **失败队的人有嫌疑**——如果你是好人，要盯失败队的人；2 人队 1 失败时，那 2 人**互相 100% 知道对方阵营**。
+
+⚡ **轮次氛围**：第 1 轮信息少，发言轻松随意；第 2-3 轮认真分析；第 4-5 轮严肃激烈。
+⚡ **角色专属铁律**：详见后面【你的角色策略】部分——一定要严格遵守！
+
+═══════════════════════════════════════════════
 
 剑栏血战之夜——亚瑟王重伤倒下，梅林与派西维尔护送奄奄一息的王者，划着小舟驶向迷雾之中的圣岛阿瓦隆。圣杯之水可让王起死回生，但莫甘娜、莫德雷德、奥伯伦混入了护卫队中，要在抵达彼岸前刺死那位知晓圣杯秘密的人——梅林。
 
@@ -2942,6 +3020,13 @@ F14. **🎯 玩家水平有差异，但每个人都要努力**：真实桌上玩
    • ⚠️ **关键铁律**：即使是"新手风格"也要**努力分析**——不能用"我啥也不知道"逃避发言
    • 新手风格 ≠ 不说话！新手也会**说出自己的感觉**，给出**虽然不准但有内容的判断**
    • 如果 AI 风格里有 PERSONAS（性格画像），按那个走；没有就**默认中等水平**——既不太学究也不太懒
+F14b. **⚖️ 你和其他玩家齐头并进**：你看到其他玩家分析得头头是道，**你也必须努力达到同样水平**！
+   • ❌ 不能因为"我是新手"就只说一句话敷衍
+   • ❌ 不能因为"别人已经分析过了"就只说"我同意 X 号"
+   • ✅ 即使引用了别人的观察，**也要加上自己的角度**：
+     - "5 号说 3 号可疑我同意，**我再补充一点**：3 号上轮第一个秒支持那队，急着定调有问题"
+     - "我跟 5 号站一起，**因为我也注意到** 3 号反对 7 号那队的理由说不通"
+   • 字数和深度要和别人一致——别人分析 150 字你也别只说 30 字
 F15. **🗣 任务失败后的"我说什么来着"（事后诸葛亮）**：如果你**之前怀疑过 X 号**，而 X 号现在被任务结果证明可疑（在失败队里 + 失败票数符合）——你可以**理直气壮地"翻旧账"**：
    • "我早就说 X 号有问题你们不信！这下信了吧"
    • "终于有人信我了，我上轮就反对带 X 号"
@@ -3068,7 +3153,14 @@ ${game.assistMode === "auto" ? `═══ 输出格式（重要！必须严格�
 - 模糊话："这队感觉不错""有点问题""值得考虑"——必须说**具体哪里**有问题
 - 不要总结陈词，不要说"我们应该如何如何"
 
-像跟朋友群聊但又有逻辑分析师的深度——直接指认具体玩家、给具体怀疑理由、消化别人的发言。`;
+像跟朋友群聊但又有逻辑分析师的深度——直接指认具体玩家、给具体怀疑理由、消化别人的发言。
+
+═══════ 🎯 最后再强调一次（最重要的 5 条）══════════
+1. **谈自己用"我"**——不要说"${speaker.seatLabel}觉得"（你就是${speaker.seatLabel}！）
+2. **必须引用真实数据**——前面玩家说了什么、上几轮谁失败、几张失败票，全部基于场上信息
+3. **必须给明确立场**——支持/反对/重选，绝不能说"再看看""不好说"
+4. **跟别人齐头并进**——别人分析 150 字你也要 80-150 字，不能短句敷衍
+5. **不许骂人/攻击**——禁用"垃圾""脑残""蠢"，不爽用"我有疑问"代替`;
     }
     if (provider === "kimi") {
       return `
@@ -3090,7 +3182,51 @@ ${game.assistMode === "auto" ? `═══ 输出格式（重要！必须严格�
 - 兜底话："以上仅供参考""仅是个人看法""综上"—— 直接说就完了
 - 装专家口气："从博弈论角度""从概率上看"—— 这是桌游不是答辩
 
-像群聊里那个**最爱推理、最会讲段子**的朋友——长但不啰嗦，有料但不端着。`;
+像群聊里那个**最爱推理、最会讲段子**的朋友——长但不啰嗦，有料但不端着。
+
+═══════ 🎯 最后再强调一次（最重要的 5 条）══════════
+1. **谈自己用"我"**——不要说"${speaker.seatLabel}觉得"（你就是${speaker.seatLabel}！）
+2. **必须引用真实数据**——前面玩家说了什么、上几轮谁失败、几张失败票，全部基于场上信息
+3. **必须给明确立场**——支持/反对/重选，绝不能说"再看看""不好说"
+4. **跟别人齐头并进**——别人分析 150 字你也要 80-150 字，不能短句敷衍
+5. **不许骂人/攻击**——禁用"垃圾""脑残""蠢"，不爽用"我有疑问"代替`;
+    }
+    if (provider === "zhipu") {
+      return `
+
+═══════ ⚠️ 风格强制约束（智谱 GLM 必读）══════════
+**你是阿瓦隆桌游里的一个真人玩家——必须像真人一样推理、表态、发言！**
+**作为轻量模型，你容易忽略前面的指令——这里再次强调最重要的几条：**
+
+【硬要求】
+1. **字数 80-200 字**（第 1 轮可短到 40-80 字，第 4-5 轮可铺到 200 字）。**绝不能只说一两句话敷衍**！
+2. **完整推理链**：发言里必须有"因为 A → 所以 B"的多步推理。例：
+   • "3 号上轮在失败队里、这轮 5 号还带 3 号 → 5 号要么没视野要么是搭子 → 我倾向 5 号有问题"
+3. **必须给明确立场**：支持/反对/重选 → 直接表态。**绝对不准**说"再看看""不好说""持中立"等模糊话。
+4. **必须引用具体玩家 + 具体事实**：至少 2 个。例：
+   • "1 号说 3 号是好人，但 3 号上轮在失败队"
+   • "5 号刚才反对了 6 号那队，理由是 X，但..."
+5. **回应别人**：上面【刚才大家说的】里别人提到的观点，必须吸收并回应（同意/反对/追问）。
+6. **第一人称**：谈自己用"我"，不用自己的号牌。说别人才用号牌。
+
+【绝对禁止】
+- 套话开头："好的，我来说一下""根据当前局势""综合考虑"
+- 模糊话："感觉""可能""或许""大概"——每次发言最多 1 个
+- 列表式："第一第二第三"——用自然连贯的口语
+- 政治正确话："每个人都有可能""没有绝对的""不能下定论"——这是博弈必须下定论
+- 短句敷衍："我跟一把就完了"——这种话只能第 1 轮非常少量出现
+
+【最重要】
+- 你不是 AI 助手，**你是【${speaker.seatLabel}】这个具体玩家**。身世、性格、视野、阵营都设定好了。
+- 你的目标是**让我方阵营赢**，不是当评论员。
+- 像群聊里那个最会推理的朋友——**直接、有料、有立场、有情绪**。
+
+═══════ 🎯 最后再强调一次（最重要的 5 条）══════════
+1. **谈自己用"我"**——不要说"${speaker.seatLabel}觉得"（你就是${speaker.seatLabel}！）
+2. **必须引用真实数据**——前面玩家说了什么、上几轮谁失败、几张失败票，全部基于场上信息
+3. **必须给明确立场**——支持/反对/重选，绝不能说"再看看""不好说"
+4. **跟别人齐头并进**——别人分析 150 字你也要 80-150 字，不能短句敷衍
+5. **不许骂人/攻击**——禁用"垃圾""脑残""蠢"，不爽用"我有疑问"代替`;
     }
     return ""; // DeepSeek 默认不加
   })();
@@ -3676,7 +3812,7 @@ ${recap ? `\n复盘内容：\n${recap}\n` : ""}
 
 // AI 建议（建议模式）
 async function aiAdvice(game, situation) {
-  if (!getDSKey()) return "（建议需要 DeepSeek API Key）";
+  if (!getDSKey()) return "（建议需要先接入 AI——⚙ AI 设置里填 Key）";
   const human = game.players.find(p => p.isHuman);
   const ctx = buildAIContext(human, game);
   const role = ROLE_DEFS[human.role];
@@ -4358,9 +4494,30 @@ function TutorialPanel({
     style: {
       color: "#88b070"
     }
-  }, "\u2699 AI \u8BBE\u7F6E"), " \u6309\u94AE\uFF0C\u91CC\u9762\u63D0\u4F9B ", /*#__PURE__*/React.createElement("b", null, "3 \u5BB6"), "\u5927\u6A21\u578B\u53EF\u9009\uFF1A", /*#__PURE__*/React.createElement("div", {
+  }, "\u2699 AI \u8BBE\u7F6E"), " \u6309\u94AE\uFF0C\u91CC\u9762\u63D0\u4F9B ", /*#__PURE__*/React.createElement("b", null, "4 \u5BB6"), "\u5927\u6A21\u578B\u53EF\u9009\uFF1A", /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10,
+      padding: "10px 14px",
+      borderRadius: 6,
+      border: "1px solid rgba(136,176,112,0.5)",
+      background: "rgba(136,176,112,0.1)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#a8d4a8",
+      fontSize: 13,
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, "\u2728 \u667A\u8C31 GLM\uFF08\u9996\u63A8 0 \u6210\u672C\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e8d8a8",
+      fontSize: 12,
+      lineHeight: 1.7
+    }
+  }, "\u6E05\u534E\u56E2\u961F\uFF0C\u4E2D\u6587\u6700\u5F3A\u3002", /*#__PURE__*/React.createElement("b", null, "GLM-4-Flash \u6C38\u4E45\u514D\u8D39"), "\uFF01\u5B9E\u540D\u8BA4\u8BC1\u518D\u9001 500 \u4E07 Token\u3002")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
       padding: "10px 14px",
       borderRadius: 6,
       border: "1px solid rgba(91,143,191,0.4)",
@@ -4373,7 +4530,7 @@ function TutorialPanel({
       fontWeight: 600,
       marginBottom: 4
     }
-  }, "\uD83D\uDC33 DeepSeek\uFF08\u63A8\u8350\u8D28\u91CF\u6700\u9AD8\uFF09"), /*#__PURE__*/React.createElement("div", {
+  }, "\uD83D\uDC33 DeepSeek\uFF08\u63A8\u7406\u8D28\u91CF\u6700\u9AD8\uFF09"), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "#e8d8a8",
       fontSize: 12,
@@ -4394,7 +4551,7 @@ function TutorialPanel({
       fontWeight: 600,
       marginBottom: 4
     }
-  }, "\uD83C\uDD93 \u767E\u5EA6\u5343\u5E06\uFF08\u63A8\u8350\u514D\u8D39\u73A9\uFF09"), /*#__PURE__*/React.createElement("div", {
+  }, "\uD83C\uDD93 \u767E\u5EA6\u5343\u5E06\uFF08\u4E5F\u514D\u8D39\uFF09"), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "#e8d8a8",
       fontSize: 12,
@@ -4415,7 +4572,7 @@ function TutorialPanel({
       fontWeight: 600,
       marginBottom: 4
     }
-  }, "\uD83D\uDC33 Kimi\uFF08\u4E2D\u6587\u6700\u50CF\u771F\u4EBA\uFF09"), /*#__PURE__*/React.createElement("div", {
+  }, "\uD83D\uDC33 Kimi\uFF08\u4E2D\u6587\u6700\u5730\u9053\uFF09"), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "#e8d8a8",
       fontSize: 12,
@@ -4432,7 +4589,7 @@ function TutorialPanel({
       color: "#e6b450",
       lineHeight: 1.7
     }
-  }, "\u2699 ", /*#__PURE__*/React.createElement("b", null, "\u540C\u4E00\u65F6\u95F4\u53EA\u80FD\u7528\u4E00\u5BB6"), "\u2014\u2014AI \u8BBE\u7F6E\u9762\u677F\u91CC\u9009\u54EA\u5BB6\u5C31\u7528\u54EA\u5BB6\uFF0C3 \u5BB6\u4E0D\u4F1A\u540C\u65F6\u542F\u7528\u3002"), /*#__PURE__*/React.createElement("div", {
+  }, "\u2699 ", /*#__PURE__*/React.createElement("b", null, "\u540C\u4E00\u65F6\u95F4\u53EA\u80FD\u7528\u4E00\u5BB6"), "\u2014\u2014AI \u8BBE\u7F6E\u9762\u677F\u91CC\u9009\u54EA\u5BB6\u5C31\u7528\u54EA\u5BB6\uFF0C4 \u5BB6\u4E0D\u4F1A\u540C\u65F6\u542F\u7528\u3002"), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 8,
       padding: 10,
@@ -5246,7 +5403,16 @@ function Setup({
     style: {
       color: "rgba(232,216,168,0.7)"
     }
-  }, "\u738B\u5EA7\u4E4B\u4E0B\uFF0C\u5FE0\u8BDA\u4E0E\u80CC\u53DB\u540C\u5E2D\u800C\u5750\u3002", /*#__PURE__*/React.createElement("br", null), "\u4F60\u662F\u4E9A\u745F\u7684\u9A91\u58EB\uFF0C\u8FD8\u662F\u83AB\u5FB7\u96F7\u5FB7\u7684\u722A\u7259\uFF1F")), /*#__PURE__*/React.createElement("aside", {
+  }, "\u738B\u5EA7\u4E4B\u4E0B\uFF0C\u5FE0\u8BDA\u4E0E\u80CC\u53DB\u540C\u5E2D\u800C\u5750\u3002", /*#__PURE__*/React.createElement("br", null), "\u4F60\u662F\u4E9A\u745F\u7684\u9A91\u58EB\uFF0C\u8FD8\u662F\u83AB\u5FB7\u96F7\u5FB7\u7684\u722A\u7259\uFF1F"), /*#__PURE__*/React.createElement("div", {
+    className: "mt-3 inline-block px-3 py-1 rounded-full",
+    style: {
+      background: useAPI ? "rgba(136,176,112,0.15)" : "rgba(122,72,120,0.15)",
+      border: useAPI ? "1px solid rgba(136,176,112,0.5)" : "1px solid rgba(122,72,120,0.4)",
+      fontSize: 11,
+      letterSpacing: "0.15em",
+      color: useAPI ? "#a8d4a8" : "#c8a8d8"
+    }
+  }, useAPI ? "🤖 AI 已就位 · 智能玩家整装待发" : "🤖 一个人的桌游 · 你 vs 大模型 AI 玩家")), /*#__PURE__*/React.createElement("aside", {
     className: "story-side story-side-left"
   }, /*#__PURE__*/React.createElement("div", {
     className: "story-side-deco"
@@ -5348,7 +5514,11 @@ function Setup({
       color: "#a8c4d8",
       lineHeight: 1.6
     }
-  }, "\uD83D\uDCA1 ", /*#__PURE__*/React.createElement("b", null, "AI \u8BBE\u7F6E\u662F\u5E72\u5565\u7684\uFF1F"), /*#__PURE__*/React.createElement("br", null), "\u586B\u4E86 Key \u4E4B\u540E\uFF0CAI \u73A9\u5BB6\u5C31\u7531\u771F\u6B63\u7684\u5927\u6A21\u578B\u9A71\u52A8\uFF0C\u53D1\u8A00\u63A8\u7406\u50CF\u771F\u4EBA\uFF1B\u4E0D\u586B\u7528\u672C\u5730\u9884\u8BBE\u53F0\u8BCD\u4E5F\u80FD\u73A9\u3002", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u4E09\u5BB6\u53EF\u9009"), "\uFF1A\u767E\u5EA6\u5343\u5E06", /*#__PURE__*/React.createElement("b", null, "\u6709\u514D\u8D39\u989D\u5EA6"), "\uFF08\u65B0\u7528\u6237\u5B9E\u540D\u5C31\u80FD\u73A9\uFF09\uFF1BDeepSeek \u63A8\u7406\u5F3A\u3001Kimi \u4E2D\u6587\u597D\uFF08\u8FD9\u4E24\u5BB6\u9700\u5145\u503C\uFF09\u3002", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u540C\u4E00\u65F6\u95F4\u53EA\u80FD\u7528\u4E00\u5BB6"), "\uFF0C\u4E0B\u9762\u9009\u54EA\u5BB6\u5C31\u7528\u54EA\u5BB6\u3002"), /*#__PURE__*/React.createElement("div", {
+  }, "\uD83D\uDCA1 ", /*#__PURE__*/React.createElement("b", null, "AI \u8BBE\u7F6E\u662F\u5E72\u5565\u7684\uFF1F"), /*#__PURE__*/React.createElement("br", null), "\u586B\u4E86 Key \u4E4B\u540E\uFF0CAI \u73A9\u5BB6\u5C31\u7531\u771F\u6B63\u7684\u5927\u6A21\u578B\u9A71\u52A8\uFF0C\u53D1\u8A00\u63A8\u7406\u50CF\u771F\u4EBA\uFF1B\u4E0D\u586B\u7528\u672C\u5730\u9884\u8BBE\u53F0\u8BCD\u4E5F\u80FD\u73A9\u3002", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u56DB\u5BB6\u53EF\u9009"), "\uFF1A", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: "#88b070"
+    }
+  }, "\u667A\u8C31 GLM-4-Flash \u6C38\u4E45\u514D\u8D39"), "\uFF08\u9996\u63A8 0 \u6210\u672C\uFF09\uFF1B\u767E\u5EA6\u5343\u5E06\u6709\u514D\u8D39\u989D\u5EA6\uFF1BDeepSeek \u63A8\u7406\u6700\u5F3A\u3001Kimi \u4E2D\u6587\u6700\u5730\u9053\uFF08\u8FD9\u4E24\u5BB6\u9700\u5145\u503C\uFF09\u3002", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u540C\u4E00\u65F6\u95F4\u53EA\u80FD\u7528\u4E00\u5BB6"), "\uFF0C\u4E0B\u9762\u9009\u54EA\u5BB6\u5C31\u7528\u54EA\u5BB6\u3002"), /*#__PURE__*/React.createElement("div", {
     className: "text-xs mb-3 p-2 rounded",
     style: {
       background: "rgba(200,72,56,0.1)",
@@ -5668,7 +5838,105 @@ function Setup({
       color: "#a8c4ff",
       textDecoration: "underline"
     }
-  }, "\u5F00\u653E\u5E73\u53F0\u5145\u503C\u9875"), " \u7EED\u8D39"))), providerLocal === "qianfan" && /*#__PURE__*/React.createElement("details", {
+  }, "\u5F00\u653E\u5E73\u53F0\u5145\u503C\u9875"), " \u7EED\u8D39"))), providerLocal === "zhipu" && /*#__PURE__*/React.createElement("details", {
+    style: {
+      marginBottom: 12,
+      padding: "8px 10px",
+      borderRadius: 4,
+      background: "rgba(136,176,112,0.08)",
+      border: "1px solid rgba(136,176,112,0.4)"
+    }
+  }, /*#__PURE__*/React.createElement("summary", {
+    style: {
+      cursor: "pointer",
+      color: "#a8d4a8",
+      fontSize: 12,
+      fontWeight: 600
+    }
+  }, "\uD83D\uDCD6 \u600E\u4E48\u83B7\u53D6\u667A\u8C31 GLM Key\uFF1F\uFF08\u6709\u6C38\u4E45\u514D\u8D39\u6A21\u578B\xB7\u70B9\u5F00\u770B\u8BE6\u7EC6\u6559\u7A0B\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      fontSize: 12,
+      lineHeight: 1.8,
+      color: "#e8d8a8"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10,
+      padding: 6,
+      background: "rgba(136,176,112,0.15)",
+      borderRadius: 3,
+      color: "#88b070"
+    }
+  }, "\u2B50 ", /*#__PURE__*/React.createElement("b", null, "\u5B9E\u540D\u8BA4\u8BC1\u540E\u8D60\u9001 500 \u4E07 Token"), "\uFF0C\u800C\u4E14 ", /*#__PURE__*/React.createElement("b", null, "GLM-4-Flash \u6A21\u578B\u6C38\u4E45\u514D\u8D39"), "\uFF01", /*#__PURE__*/React.createElement("br", null), "\u8FD9\u662F\u56FD\u5185\u6700\u503C\u5F97\u9996\u8BD5\u7684 AI\u2014\u2014\u6E05\u534E\u56E2\u961F\uFF0C\u4E2D\u6587\u6700\u5F3A\u3002"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "1\uFE0F\u20E3 \u6CE8\u518C\u8D26\u53F7"), /*#__PURE__*/React.createElement("br", null), "\u6253\u5F00 ", /*#__PURE__*/React.createElement("a", {
+    href: "https://bigmodel.cn",
+    target: "_blank",
+    style: {
+      color: "#a8c4ff",
+      textDecoration: "underline"
+    }
+  }, "bigmodel.cn"), "\uFF0C\u7528", /*#__PURE__*/React.createElement("b", null, "\u624B\u673A\u53F7"), "\u6CE8\u518C\uFF08\u514D\u8D39\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "2\uFE0F\u20E3 \u5B9E\u540D\u8BA4\u8BC1"), /*#__PURE__*/React.createElement("br", null), "\u53F3\u4E0A\u89D2\u5934\u50CF \u2192 ", /*#__PURE__*/React.createElement("b", null, "\"\u8D26\u53F7\u7BA1\u7406\""), " \u2192 \u5B8C\u6210", /*#__PURE__*/React.createElement("b", null, "\u5B9E\u540D\u8BA4\u8BC1"), "\uFF08\u9001 500 \u4E07 Token + \u6C38\u4E45\u514D\u8D39 Flash \u6A21\u578B\uFF09"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "3\uFE0F\u20E3 \u521B\u5EFA Key"), /*#__PURE__*/React.createElement("br", null), "\u5DE6\u4FA7\u83DC\u5355 \u2192 ", /*#__PURE__*/React.createElement("b", null, "\"API \u5BC6\u94A5\""), " \u2192 \u70B9", /*#__PURE__*/React.createElement("b", null, "\"\u6DFB\u52A0\u65B0\u7684 API Key\""), " \u2192 \u8D77\u540D \u2192 \u521B\u5EFA"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "4\uFE0F\u20E3 \u590D\u5236 Key"), /*#__PURE__*/React.createElement("br", null), "\u663E\u793A\u7C7B\u4F3C ", /*#__PURE__*/React.createElement("code", {
+    style: {
+      background: "rgba(0,0,0,0.3)",
+      padding: "1px 4px",
+      borderRadius: 2,
+      color: "#88b070"
+    }
+  }, "xxxxxxxx.xxxxxxxx"), "\uFF0C", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: "#c84838"
+    }
+  }, "\u7ACB\u523B\u590D\u5236"), "\uFF08\u667A\u8C31 Key \u4E0D\u662F sk- \u5F00\u5934\uFF09"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 600
+    }
+  }, "5\uFE0F\u20E3 \u7C98\u8D34\u56DE\u8FD9\u91CC"), /*#__PURE__*/React.createElement("br", null), "\u586B\u5230\u4E0B\u9762 \u2192 \u4FDD\u5B58\u5E76\u6D4B\u8BD5 \u2192 \u7EFF\u8272 \u2713"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      padding: 8,
+      background: "rgba(136,176,112,0.1)",
+      borderRadius: 3,
+      fontSize: 11,
+      color: "#a8d4a8"
+    }
+  }, "\u2728 ", /*#__PURE__*/React.createElement("b", null, "\u9009 \u26A1 GLM-4-Flash \u5373\u53EF\u6C38\u4E45\u514D\u8D39\u73A9"), "\u2014\u2014\u4E0D\u9650 Token\uFF0C\u53EA\u6709\u5E76\u53D1\u9650\u5236\uFF08\u4E00\u79D2\u4E00\u4E24\u4E2A\u8BF7\u6C42\uFF09", /*#__PURE__*/React.createElement("br", null), "\u26A0\uFE0F ", /*#__PURE__*/React.createElement("b", null, "\u4E0D\u63A8\u8350\u9009 Z1-Flash"), "\u2014\u2014\u5B83\u662F\u63A8\u7406\u6A21\u578B\uFF0C\u6BCF\u6B21\u56DE\u7B54\u4F1A\"\u601D\u8003\"\u5F88\u4E45\uFF0C\u684C\u6E38\u4E0D\u9700\u8981\uFF08\u66F4\u9002\u5408\u6570\u5B66/\u4EE3\u7801\u9898\uFF09", /*#__PURE__*/React.createElement("br", null), "\uD83D\uDCA1 \u60F3\u8981\u66F4\u5F3A\u7684\u5BF9\u8BDD\u63A8\u7406\u53EF\u4EE5\u9009 GLM-4-Plus\uFF08\u7528\u4ED8\u8D39 token\uFF09"))), providerLocal === "qianfan" && /*#__PURE__*/React.createElement("details", {
     style: {
       marginBottom: 12,
       padding: "8px 10px",
@@ -5895,6 +6163,10 @@ function Setup({
   }, currentProvider.models.map(m => /*#__PURE__*/React.createElement("button", {
     key: m.id,
     onClick: () => {
+      if (m.id === "glm-z1-flash") {
+        const ok = window.confirm("⚠️ 不推荐 GLM-Z1-Flash！\n\n这是推理模型——每次回答前会先 \"思考\" 5-15 秒。\n阿瓦隆桌游每局有几十次发言，会让游戏体验非常卡。\n\n如果坚持要用请点确定，否则建议用 GLM-4-Flash（永久免费 + 反应最快）。");
+        if (!ok) return;
+      }
       setDSModel(m.id);
       setDsModelLocal(m.id);
     },
@@ -5920,7 +6192,7 @@ function Setup({
     style: {
       color: "#a8a058"
     }
-  }, providerLocal === "deepseek" && "💡 Chat 默认推荐快又便宜；Reasoner 更聪明但每次发言慢 5-15 秒", providerLocal === "qianfan" && "💡 X1 Turbo 32K 有免费额度，新用户首选；其他模型需付费", providerLocal === "kimi" && "💡 K1 8K 默认便宜快；K1 32K 上下文更长，适合长对局"))), showSaves && savesList && savesList.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, providerLocal === "deepseek" && "💡 Chat 默认推荐快又便宜；Reasoner 更聪明但每次发言慢 5-15 秒", providerLocal === "qianfan" && "💡 X1 Turbo 32K 有免费额度，新用户首选；其他模型需付费", providerLocal === "kimi" && "💡 K1 8K 默认便宜快；K1 32K 上下文更长，适合长对局", providerLocal === "zhipu" && "💡 推荐 GLM-4-Flash（永久免费 + 最快）！Z1-Flash 是推理模型说话慢，Plus 是付费旗舰"))), showSaves && savesList && savesList.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "mb-4 p-4 rounded border-2",
     style: {
       borderColor: "#e6b450",
@@ -6189,7 +6461,7 @@ function Setup({
         cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.6 : 1
       },
-      title: disabled ? "需要先启用 DeepSeek AI（点击右上角 ⚙ AI 设置）" : ""
+      title: disabled ? "需要先接入 AI（点击右上角 ⚙ AI 设置）" : ""
     }, /*#__PURE__*/React.createElement("div", {
       className: "text-sm"
     }, o.l), disabled && /*#__PURE__*/React.createElement("div", {
@@ -6242,7 +6514,93 @@ function Setup({
     style: {
       color: "#e6b450"
     }
-  }, "\xB7 ", /*#__PURE__*/React.createElement("b", null, "\u7B2C 4 \u8F6E\u4EFB\u52A1\u9700 2 \u5F20\u5931\u8D25\u7968\u624D\u7B97\u5931\u8D25"), "\uFF08\u7279\u6B8A\u89C4\u5219\uFF09"))), /*#__PURE__*/React.createElement("button", {
+  }, "\xB7 ", /*#__PURE__*/React.createElement("b", null, "\u7B2C 4 \u8F6E\u4EFB\u52A1\u9700 2 \u5F20\u5931\u8D25\u7968\u624D\u7B97\u5931\u8D25"), "\uFF08\u7279\u6B8A\u89C4\u5219\uFF09"))), !useAPI && /*#__PURE__*/React.createElement("div", {
+    className: "mt-4 p-3 rounded-lg border-2",
+    style: {
+      borderColor: "#e6b450",
+      background: "linear-gradient(135deg, rgba(230,180,80,0.12), rgba(122,72,120,0.12))"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-start gap-2"
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 22,
+      lineHeight: "22px"
+    }
+  }, "\u26A0\uFE0F"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e6b450",
+      fontWeight: 700,
+      fontSize: 13,
+      marginBottom: 4
+    }
+  }, "\u8FD8\u6CA1\u63A5\u5165 AI\u2014\u2014\u5F3A\u70C8\u5EFA\u8BAE\u5148\u63A5\u5165\u518D\u73A9"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e8d8a8",
+      fontSize: 12,
+      lineHeight: 1.6,
+      marginBottom: 6
+    }
+  }, "\u4E0D\u63A5\u5165 AI\uFF0C\u684C\u4E0A\u5176\u4ED6\u73A9\u5BB6\u53EA\u4F1A\u8BF4", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: "#a88858"
+    }
+  }, "\u9884\u8BBE\u7684\u51E0\u53E5\u5957\u8BDD"), "\u2014\u2014\u50CF\u677F\u5B50\uFF0C\u4E0D\u50CF\u771F\u4EBA\u3002", /*#__PURE__*/React.createElement("br", null), "\u63A5\u5165 AI \u540E\uFF0C\u6BCF\u4E2A AI \u73A9\u5BB6\u90FD\u4F1A", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: "#88b070"
+    }
+  }, "\u771F\u5B9E\u63A8\u7406\u3001\u88C5\u597D\u4EBA\u3001\u4E92\u76F8 cue\u3001\u5408\u4F19\u6F14\u620F"), "\uFF0C\u4F53\u9A8C\u5B8C\u5168\u4E0D\u540C\uFF01"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "rgba(136,176,112,0.15)",
+      border: "1px solid rgba(136,176,112,0.5)",
+      padding: "5px 8px",
+      borderRadius: 4,
+      fontSize: 11.5,
+      color: "#a8d4a8",
+      marginBottom: 8,
+      lineHeight: 1.6
+    }
+  }, "\u2728 ", /*#__PURE__*/React.createElement("b", null, "\u667A\u8C31 GLM-4-Flash \u6C38\u4E45\u514D\u8D39"), "\u2014\u20140 \u6210\u672C\u5C31\u80FD\u73A9\uFF01\u624B\u673A\u53F7\u6CE8\u518C + \u5B9E\u540D\u8BA4\u8BC1 = \u7ACB\u523B\u7528\u3002"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setShowApi(true);
+      setShowSaves(false);
+      setTimeout(() => {
+        // 滚到 AI 设置区
+        const el = document.querySelector('[class*="border-2"]');
+        if (el) el.scrollIntoView({
+          behavior: "smooth",
+          block: "center"
+        });
+      }, 100);
+    },
+    style: {
+      flex: 1,
+      padding: "6px 10px",
+      border: "1px solid #88b070",
+      borderRadius: 4,
+      background: "rgba(136,176,112,0.15)",
+      color: "#88b070",
+      fontSize: 12,
+      fontWeight: 600,
+      cursor: "pointer"
+    }
+  }, "\u2699 \u73B0\u5728\u63A5\u5165 AI\uFF08\u63A8\u8350 \xB7 1 \u5206\u949F\u641E\u5B9A\uFF09")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: "#a88858",
+      marginTop: 6,
+      lineHeight: 1.5
+    }
+  }, "\uD83D\uDCA1 \u771F\u7684\u4E0D\u60F3\u63A5\u5165\u4E5F\u53EF\u4EE5\u7EE7\u7EED\u73A9\u2014\u2014\u4F46\u8BF7\u77E5\u9053", /*#__PURE__*/React.createElement("b", null, "\u9884\u8BBE\u7248\u53EA\u80FD\u4F53\u9A8C\u6D41\u7A0B\uFF0CAI \u73A9\u5BB6\u4E0D\u4F1A\u771F\u63A8\u7406"), "\u3002")))), /*#__PURE__*/React.createElement("button", {
     disabled: !humanName.trim() || preflightChecking,
     onClick: startWithPreflight,
     className: "w-full py-4 mt-6 border-2 tracking-widest uppercase text-base rounded",
@@ -6254,7 +6612,7 @@ function Setup({
       animation: humanName.trim() && !preflightChecking ? "glow 2.4s ease-in-out infinite" : "none",
       opacity: preflightChecking ? 0.6 : 1
     }
-  }, preflightChecking ? "  正在测试 AI 接入...  " : humanName.trim() ? "⚔  入  场  ⚔" : "请先输入名字"), preflightError && /*#__PURE__*/React.createElement("div", {
+  }, preflightChecking ? "  正在测试 AI 接入...  " : humanName.trim() ? useAPI ? "⚔  入  场  ⚔" : "⚔  入  场（预设版）  ⚔" : "请先输入名字"), preflightError && /*#__PURE__*/React.createElement("div", {
     onClick: () => setPreflightError(null),
     style: {
       position: "fixed",
@@ -6665,6 +7023,28 @@ function recordSubround(g, type, payload) {
   });
 }
 
+// 🔒🔒🔒 全局 AI 发言互斥锁——绝对禁止两个 AI 同时打字
+// 任何 AI 发言（含 typeWriter）开始前必须拿这个锁，结束后释放
+// 这是最后一道防线——即使 React useEffect 出 bug 也能保证串行
+const __aiSpeakLock = {
+  busy: false,
+  queue: [],
+  async acquire() {
+    if (!this.busy) {
+      this.busy = true;
+      return;
+    }
+    // 排队等待
+    await new Promise(resolve => this.queue.push(resolve));
+    this.busy = true;
+  },
+  release() {
+    this.busy = false;
+    const next = this.queue.shift();
+    if (next) next();
+  }
+};
+
 // 打字机效果工具：把一段文本逐字加到 history 最后一项
 async function typeWriter(setGame, fullText, speedMs = 35, entryId = null) {
   const chars = [...fullText];
@@ -6779,33 +7159,114 @@ function Play({
   useEffect(() => {
     setAdviceText("");
   }, [game.phase, game.round, game.voteRound]);
+
+  // 🆕 全局运行 token：每次 useEffect 触发会拿一个新 token，进入 async 后会持续校验 token 是否还是当前 token
+  // 这能防止：useEffect 多次触发（比如 busy 变化、history 变化）时，多个 async 函数并行跑
+  const runTokenRef = useRef(0);
+  const runningRef = useRef(false); // 是否有 async 任务在跑
+
   useEffect(() => {
-    if (busy) return;
     if (game.phase === "reveal") return;
+    // 🔒 全局门禁：如果有任务在跑，绝不进入
+    if (runningRef.current) return;
+    const myToken = ++runTokenRef.current;
+    runningRef.current = true;
     const isAuto = game.assistMode === "auto";
-    if (game.phase === "propose" && !isHumanLeader) runAIPropose();else if (game.phase === "propose" && isHumanLeader) {
-      if (isAuto) runAutoPropose();else setGame(prev => ({
-        ...prev,
-        phase: "humanPropose"
-      }));
-    } else if (game.phase === "pickDirection" && !isHumanLeader) runAIPickDir();else if (game.phase === "pickDirection" && isHumanLeader) {
-      if (isAuto) runAutoPickDir();
-      // 否则等用户在 humanPropose 完成时已经走完了
-    } else if (game.phase === "leaderOpening" && !isHumanLeader) runAILeaderOpening();else if (game.phase === "leaderOpening" && isHumanLeader && isAuto) runAutoLeaderOpening();else if (game.phase === "discuss") runDiscussion();else if (game.phase === "leaderClosing" && !isHumanLeader) runAILeaderClosing();else if (game.phase === "leaderClosing" && isHumanLeader && isAuto) runAutoLeaderClosing();else if (game.phase === "revise" && !isHumanLeader) runAIRevise();else if (game.phase === "revise" && isHumanLeader && isAuto) runAutoRevise();else if (game.phase === "vote") runVoting();else if (game.phase === "humanVote" && isAuto) runAutoVote();else if (game.phase === "mission") runMission();else if (game.phase === "humanMission" && isAuto) runAutoMission();else if (game.phase === "checkEnd") checkEnd();
-    // 刺杀阶段：进入讨论流程（无论刺客是谁）
-    else if (game.phase === "assassinate") runAssassination();else if (game.phase === "assassinate" && human.role === "Assassin" && isAuto) runAutoAssassinate();
-    // 兜底：humanSpeakDone 是中间态。如果存档恢复时卡在这（用户在 AI 发言途中退出），自动切回 discuss 让 runDiscussion 接管
-    else if (game.phase === "humanSpeakDone") {
+
+    // 包装：所有 run* 函数前后自动管理锁
+    const wrap = async fn => {
+      try {
+        await fn();
+      } catch (e) {
+        console.error("[runner] error:", e);
+      } finally {
+        // 只有当前 token 是最新 token 才释放锁——否则说明已被 cleanup 取消
+        if (runTokenRef.current === myToken) {
+          runningRef.current = false;
+        }
+      }
+    };
+
+    // 🔧 进入分支前再次确认 token——防止快速 phase 切换导致重复进入
+    const checkToken = () => runTokenRef.current === myToken;
+    if (game.phase === "propose" && !isHumanLeader) wrap(async () => {
+      if (checkToken()) await runAIPropose();
+    });else if (game.phase === "propose" && isHumanLeader) {
+      if (isAuto) wrap(async () => {
+        if (checkToken()) await runAutoPropose();
+      });else {
+        runningRef.current = false;
+        setGame(prev => ({
+          ...prev,
+          phase: "humanPropose"
+        }));
+      }
+    } else if (game.phase === "pickDirection" && !isHumanLeader) wrap(async () => {
+      if (checkToken()) await runAIPickDir();
+    });else if (game.phase === "pickDirection" && isHumanLeader) {
+      if (isAuto) wrap(async () => {
+        if (checkToken()) await runAutoPickDir();
+      });else {
+        runningRef.current = false;
+      }
+    } else if (game.phase === "leaderOpening" && !isHumanLeader) wrap(async () => {
+      if (checkToken()) await runAILeaderOpening();
+    });else if (game.phase === "leaderOpening" && isHumanLeader && isAuto) wrap(async () => {
+      if (checkToken()) await runAutoLeaderOpening();
+    });else if (game.phase === "leaderOpening" && isHumanLeader && !isAuto) {
+      runningRef.current = false;
+    } else if (game.phase === "discuss") wrap(async () => {
+      if (checkToken()) await runDiscussion();
+    });else if (game.phase === "leaderClosing" && !isHumanLeader) wrap(async () => {
+      if (checkToken()) await runAILeaderClosing();
+    });else if (game.phase === "leaderClosing" && isHumanLeader && isAuto) wrap(async () => {
+      if (checkToken()) await runAutoLeaderClosing();
+    });else if (game.phase === "leaderClosing" && isHumanLeader && !isAuto) {
+      runningRef.current = false;
+    } else if (game.phase === "revise" && !isHumanLeader) wrap(async () => {
+      if (checkToken()) await runAIRevise();
+    });else if (game.phase === "revise" && isHumanLeader && isAuto) wrap(async () => {
+      if (checkToken()) await runAutoRevise();
+    });else if (game.phase === "revise" && isHumanLeader && !isAuto) {
+      runningRef.current = false;
+    } else if (game.phase === "vote") wrap(async () => {
+      if (checkToken()) await runVoting();
+    });else if (game.phase === "humanVote" && isAuto) wrap(async () => {
+      if (checkToken()) await runAutoVote();
+    });else if (game.phase === "humanVote") {
+      runningRef.current = false;
+    } else if (game.phase === "mission") wrap(async () => {
+      if (checkToken()) await runMission();
+    });else if (game.phase === "humanMission" && isAuto) wrap(async () => {
+      if (checkToken()) await runAutoMission();
+    });else if (game.phase === "humanMission") {
+      runningRef.current = false;
+    } else if (game.phase === "checkEnd") wrap(async () => {
+      if (checkToken()) await checkEnd();
+    });else if (game.phase === "assassinate" && human.role === "Assassin" && isAuto) wrap(async () => {
+      if (checkToken()) await runAutoAssassinate();
+    });else if (game.phase === "assassinate") wrap(async () => {
+      if (checkToken()) await runAssassination();
+    });else if (game.phase === "humanSpeak") {
+      runningRef.current = false;
+    } else if (game.phase === "humanSpeakDone") {
+      runningRef.current = false;
       setGame(prev => ({
         ...prev,
         phase: "discuss",
         pendingSpeechOrder: undefined,
         pendingSpeechIdx: undefined
       }));
+    } else {
+      runningRef.current = false;
     }
-    // 注意：voteShown 不在这里兜底——它需要显示 2.4 秒特效再由 runVoting 内部推进。
-    // 如果是从存档恢复时刚好卡在 voteShown，onBack 已经把它转成 mission/propose 了。
-  }, [game.phase, game.round, game.voteRound, busy]);
+
+    // cleanup：组件卸载或下次触发时，让当前 token 失效
+    return () => {
+      // 不立即重置 runningRef——让 finally 自己处理
+    };
+  }, [game.phase, game.round, game.voteRound]); // 🔥 关键：去掉 busy 依赖！
+
   function dismissReveal() {
     const g = {
       ...game
@@ -6852,9 +7313,23 @@ function Play({
     setBusy(false);
   }
   async function runAILeaderOpening() {
+    // 🔒 加锁防止重入
+    const lockKey = `leaderOpening-r${game.round}-v${game.voteRound}`;
+    if (phaseRunLock.current[lockKey]) return;
+    if (game.phase !== "leaderOpening") return;
+    phaseRunLock.current[lockKey] = true;
+
+    // 🔒🔒 全局 AI 发言锁——绝对串行
+    await __aiSpeakLock.acquire();
+    if (game.phase !== "leaderOpening") {
+      __aiSpeakLock.release();
+      delete phaseRunLock.current[lockKey];
+      return;
+    }
     setBusy(true);
     await sleep(400);
     const placeholderText = "（思考中...）";
+    const typeId = `t${Date.now()}-leader-${leader.id}-${Math.random().toString(36).slice(2, 7)}`;
     let g = {
       ...game
     };
@@ -6862,48 +7337,74 @@ function Play({
       tag: "队长开场",
       text: placeholderText,
       typing: true,
-      speakerId: leader.id
+      speakerId: leader.id,
+      _typeId: typeId
     }];
     g.currentSpeakerId = leader.id;
     setGame(g);
-    const r = await aiSpeak(leader, game, "leaderOpening", useAPI);
-    // 替换占位为正式开始打字
-    setGame(prev => {
-      const ng = {
-        ...prev
-      };
-      const last = ng.history[ng.history.length - 1];
-      last.text = "";
-      ng.history = [...ng.history.slice(0, -1), last];
-      return ng;
-    });
-    await typeWriter(setGame, r.text, 70);
-    setGame(prev => ({
-      ...prev,
-      currentSpeakerId: null,
-      stances: {
-        ...(prev.stances || {}),
-        [leader.id]: r.stance
-      },
-      phase: "discuss",
-      thinkingLog: prev.assistMode === "auto" ? [...(prev.thinkingLog || []), {
-        id: Date.now() + Math.random(),
-        seatLabel: leader.seatLabel,
-        playerId: leader.id,
-        role: leader.role,
-        side: ROLE_DEFS[leader.role].side,
-        thinking: r.thinking || "",
-        speech: r.text,
-        phase: "leaderOpening",
-        round: prev.round
-      }] : prev.thinkingLog || []
-    }));
-    await sleep(700);
-    setBusy(false);
+    try {
+      const r = await aiSpeak(leader, game, "leaderOpening", useAPI);
+      // 替换占位为正式开始打字——按 typeId 找
+      setGame(prev => {
+        const ng = {
+          ...prev
+        };
+        const idx = ng.history.findIndex(h => h._typeId === typeId);
+        if (idx >= 0) {
+          ng.history = [...ng.history];
+          ng.history[idx] = {
+            ...ng.history[idx],
+            text: ""
+          };
+        }
+        return ng;
+      });
+      await typeWriter(setGame, r.text, 70, typeId);
+      setGame(prev => ({
+        ...prev,
+        currentSpeakerId: null,
+        stances: {
+          ...(prev.stances || {}),
+          [leader.id]: r.stance
+        },
+        phase: "discuss",
+        thinkingLog: prev.assistMode === "auto" ? [...(prev.thinkingLog || []), {
+          id: Date.now() + Math.random(),
+          seatLabel: leader.seatLabel,
+          playerId: leader.id,
+          role: leader.role,
+          side: ROLE_DEFS[leader.role].side,
+          thinking: r.thinking || "",
+          speech: r.text,
+          phase: "leaderOpening",
+          round: prev.round
+        }] : prev.thinkingLog || []
+      }));
+      await sleep(700);
+    } finally {
+      delete phaseRunLock.current[lockKey];
+      __aiSpeakLock.release();
+      setBusy(false);
+    }
   }
   async function runAILeaderClosing() {
+    // 🔒 加锁防止重入
+    const lockKey = `leaderClosing-r${game.round}-v${game.voteRound}`;
+    if (phaseRunLock.current[lockKey]) return;
+    if (game.phase !== "leaderClosing") return;
+    phaseRunLock.current[lockKey] = true;
+
+    // 🔒🔒 全局 AI 发言锁
+    await __aiSpeakLock.acquire();
+    if (game.phase !== "leaderClosing") {
+      __aiSpeakLock.release();
+      delete phaseRunLock.current[lockKey];
+      return;
+    }
+    phaseRunLock.current[lockKey] = true;
     setBusy(true);
     await sleep(400);
+    const typeId = `t${Date.now()}-closing-${leader.id}-${Math.random().toString(36).slice(2, 7)}`;
     let g = {
       ...game
     };
@@ -6911,34 +7412,40 @@ function Play({
       tag: "队长总结",
       text: "",
       typing: true,
-      speakerId: leader.id
+      speakerId: leader.id,
+      _typeId: typeId
     }];
     g.currentSpeakerId = leader.id;
     setGame(g);
-    const r = await aiSpeak(leader, game, "leaderClosing", useAPI);
-    await typeWriter(setGame, r.text, 70);
-    setGame(prev => ({
-      ...prev,
-      currentSpeakerId: null,
-      stances: {
-        ...(prev.stances || {}),
-        [leader.id]: r.stance
-      },
-      phase: "revise",
-      thinkingLog: prev.assistMode === "auto" ? [...(prev.thinkingLog || []), {
-        id: Date.now() + Math.random(),
-        seatLabel: leader.seatLabel,
-        playerId: leader.id,
-        role: leader.role,
-        side: ROLE_DEFS[leader.role].side,
-        thinking: r.thinking || "",
-        speech: r.text,
-        phase: "leaderClosing",
-        round: prev.round
-      }] : prev.thinkingLog || []
-    }));
-    await sleep(700);
-    setBusy(false);
+    try {
+      const r = await aiSpeak(leader, game, "leaderClosing", useAPI);
+      await typeWriter(setGame, r.text, 70, typeId);
+      setGame(prev => ({
+        ...prev,
+        currentSpeakerId: null,
+        stances: {
+          ...(prev.stances || {}),
+          [leader.id]: r.stance
+        },
+        phase: "revise",
+        thinkingLog: prev.assistMode === "auto" ? [...(prev.thinkingLog || []), {
+          id: Date.now() + Math.random(),
+          seatLabel: leader.seatLabel,
+          playerId: leader.id,
+          role: leader.role,
+          side: ROLE_DEFS[leader.role].side,
+          thinking: r.thinking || "",
+          speech: r.text,
+          phase: "leaderClosing",
+          round: prev.round
+        }] : prev.thinkingLog || []
+      }));
+      await sleep(700);
+    } finally {
+      delete phaseRunLock.current[lockKey];
+      __aiSpeakLock.release();
+      setBusy(false);
+    }
   }
   async function runDiscussion() {
     // 🔒 运行锁：防止同一时刻多次进入 runDiscussion 导致重复发言
@@ -7009,42 +7516,69 @@ function Play({
           setBusy(false);
           return; // 锁不释放——等真人发言后会进入 submitSpeech 流程
         }
-        // AI 发言
-        g = {
-          ...g,
-          currentSpeakerId: id
-        };
-        const typeId = `t${Date.now()}-${id}-${Math.random().toString(36).slice(2, 7)}`;
-        g.history = [...g.history, {
-          tag: sp.seatLabel,
-          text: "",
-          typing: true,
-          _typeId: typeId
-        }];
-        setGame(g);
-        await sleep(350);
-        const r = await aiSpeak(sp, g, "discuss", useAPI);
-        await typeWriter(setGame, r.text, 70, typeId);
-        setGame(prev => ({
-          ...prev,
-          currentSpeakerId: null,
-          stances: {
-            ...(prev.stances || {}),
-            [sp.id]: r.stance
-          },
-          thinkingLog: prev.assistMode === "auto" ? [...(prev.thinkingLog || []), {
-            id: Date.now() + Math.random(),
-            seatLabel: sp.seatLabel,
-            playerId: sp.id,
-            role: sp.role,
-            side: ROLE_DEFS[sp.role].side,
-            thinking: r.thinking || "",
-            speech: r.text,
-            phase: "discuss",
-            round: prev.round
-          }] : prev.thinkingLog || []
-        }));
-        await sleep(900);
+        // AI 发言——🔒 全局锁包裹，绝对禁止与其他 AI 并发
+        await __aiSpeakLock.acquire();
+        try {
+          // 重新拿一次最新 game state，防止 acquire 等待期间状态变化
+          g = await new Promise(resolve => setGame(prev => {
+            resolve(prev);
+            return prev;
+          }));
+          // 再次确认：phase 还在 discuss，且自己还没发过言
+          if (g.phase !== "discuss") return;
+          const spoken2 = new Set();
+          const idx2 = (() => {
+            for (let i = g.history.length - 1; i >= 0; i--) {
+              if (g.history[i].tag === "队长开场") return i;
+            }
+            return -1;
+          })();
+          if (idx2 >= 0) {
+            g.history.slice(idx2 + 1).forEach(h => {
+              if (/^\d+号$/.test(h.tag) && !h.typing) {
+                spoken2.add(parseInt(h.tag.replace("号", "")) - 1);
+              }
+            });
+          }
+          if (spoken2.has(id)) continue;
+          g = {
+            ...g,
+            currentSpeakerId: id
+          };
+          const typeId = `t${Date.now()}-${id}-${Math.random().toString(36).slice(2, 7)}`;
+          g.history = [...g.history, {
+            tag: sp.seatLabel,
+            text: "",
+            typing: true,
+            _typeId: typeId
+          }];
+          setGame(g);
+          await sleep(350);
+          const r = await aiSpeak(sp, g, "discuss", useAPI);
+          await typeWriter(setGame, r.text, 70, typeId);
+          setGame(prev => ({
+            ...prev,
+            currentSpeakerId: null,
+            stances: {
+              ...(prev.stances || {}),
+              [sp.id]: r.stance
+            },
+            thinkingLog: prev.assistMode === "auto" ? [...(prev.thinkingLog || []), {
+              id: Date.now() + Math.random(),
+              seatLabel: sp.seatLabel,
+              playerId: sp.id,
+              role: sp.role,
+              side: ROLE_DEFS[sp.role].side,
+              thinking: r.thinking || "",
+              speech: r.text,
+              phase: "discuss",
+              round: prev.round
+            }] : prev.thinkingLog || []
+          }));
+          await sleep(900);
+        } finally {
+          __aiSpeakLock.release();
+        }
       }
       setGame(prev => ({
         ...prev,
@@ -7108,6 +7642,11 @@ function Play({
       const ok = window.confirm(`💬 提示：${check.reason}\n\n如果你确实想这么发，点"确定"继续；否则点"取消"重写。`);
       if (!ok) return;
     }
+
+    // 🔒 拿全局锁——防止 useEffect 同时跑
+    if (runningRef.current) return; // 已经有任务在跑
+    runningRef.current = true;
+    const myToken = ++runTokenRef.current;
     let g = {
       ...game
     };
@@ -7129,18 +7668,10 @@ function Play({
         pendingSpeechOrder: undefined,
         pendingSpeechIdx: undefined
       };
+      runningRef.current = false; // 释放锁，让 useEffect 接管 leaderClosing
       setGame(g);
       return;
     }
-
-    // 释放老锁（runDiscussion 里那个）
-    const oldLockKey = `discuss-r${g.round}-v${g.voteRound}`;
-    delete phaseRunLock.current[oldLockKey];
-
-    // 拿一个新锁防止 useEffect 同时触发 runDiscussion
-    const subLockKey = `submit-r${g.round}-v${g.voteRound}-${idx}`;
-    if (phaseRunLock.current[subLockKey]) return;
-    phaseRunLock.current[subLockKey] = true;
     setBusy(true);
     try {
       // 收集已发言者，防重复
@@ -7211,7 +7742,7 @@ function Play({
         pendingSpeechIdx: undefined
       }));
     } finally {
-      delete phaseRunLock.current[subLockKey];
+      runningRef.current = false; // 释放锁，让 useEffect 接管 leaderClosing
       setBusy(false);
     }
   }
@@ -7791,8 +8322,10 @@ function Play({
     setBusy(false);
   }
   async function runAutoLeaderOpening() {
+    await __aiSpeakLock.acquire();
     setBusy(true);
     await sleep(400);
+    const typeId = `t${Date.now()}-auto-open-${human.id}-${Math.random().toString(36).slice(2, 7)}`;
     let g = {
       ...game
     };
@@ -7800,27 +8333,34 @@ function Play({
       tag: "队长开场",
       text: "",
       typing: true,
-      speakerId: human.id
+      speakerId: human.id,
+      _typeId: typeId
     }];
     g.currentSpeakerId = human.id;
     setGame(g);
-    const r = await aiSpeak(human, game, "leaderOpening", useAPI);
-    await typeWriter(setGame, r.text, 70);
-    setGame(prev => ({
-      ...prev,
-      currentSpeakerId: null,
-      stances: {
-        ...(prev.stances || {}),
-        [human.id]: r.stance
-      },
-      phase: "discuss"
-    }));
-    await sleep(700);
-    setBusy(false);
+    try {
+      const r = await aiSpeak(human, game, "leaderOpening", useAPI);
+      await typeWriter(setGame, r.text, 70, typeId);
+      setGame(prev => ({
+        ...prev,
+        currentSpeakerId: null,
+        stances: {
+          ...(prev.stances || {}),
+          [human.id]: r.stance
+        },
+        phase: "discuss"
+      }));
+      await sleep(700);
+    } finally {
+      __aiSpeakLock.release();
+      setBusy(false);
+    }
   }
   async function runAutoLeaderClosing() {
+    await __aiSpeakLock.acquire();
     setBusy(true);
     await sleep(400);
+    const typeId = `t${Date.now()}-auto-close-${human.id}-${Math.random().toString(36).slice(2, 7)}`;
     let g = {
       ...game
     };
@@ -7828,23 +8368,28 @@ function Play({
       tag: "队长总结",
       text: "",
       typing: true,
-      speakerId: human.id
+      speakerId: human.id,
+      _typeId: typeId
     }];
     g.currentSpeakerId = human.id;
     setGame(g);
-    const r = await aiSpeak(human, game, "leaderClosing", useAPI);
-    await typeWriter(setGame, r.text, 70);
-    setGame(prev => ({
-      ...prev,
-      currentSpeakerId: null,
-      stances: {
-        ...(prev.stances || {}),
-        [human.id]: r.stance
-      },
-      phase: "revise"
-    }));
-    await sleep(700);
-    setBusy(false);
+    try {
+      const r = await aiSpeak(human, game, "leaderClosing", useAPI);
+      await typeWriter(setGame, r.text, 70, typeId);
+      setGame(prev => ({
+        ...prev,
+        currentSpeakerId: null,
+        stances: {
+          ...(prev.stances || {}),
+          [human.id]: r.stance
+        },
+        phase: "revise"
+      }));
+      await sleep(700);
+    } finally {
+      __aiSpeakLock.release();
+      setBusy(false);
+    }
   }
   async function runAutoRevise() {
     setBusy(true);
@@ -9297,7 +9842,7 @@ function ActionPanel({
   const [adviceLoading, setAdviceLoading] = useState(false);
   async function getAdvice(situation) {
     if (!useAPI) {
-      setAdviceText("（建议需要启用 DeepSeek API）");
+      setAdviceText("（建议需要先接入 AI——回开始页 ⚙ AI 设置填 Key）");
       return;
     }
     setAdviceLoading(true);
@@ -9952,7 +10497,30 @@ function Reveal({
       border: "1px solid rgba(216,132,60,0.4)",
       color: "#d8843c"
     }
-  }, "\u26A0 \u672C\u5C40\u6709\u83AB\u5FB7\u96F7\u5FB7\uFF0C\u4ED6\u5BF9\u4F60\u663E\u5F62\u4E3A\u597D\u4EBA\u3002"), /*#__PURE__*/React.createElement("button", {
+  }, "\u26A0 \u672C\u5C40\u6709\u83AB\u5FB7\u96F7\u5FB7\uFF0C\u4ED6\u5BF9\u4F60\u663E\u5F62\u4E3A\u597D\u4EBA\u3002"), !game.useAPI && /*#__PURE__*/React.createElement("div", {
+    className: "p-3 rounded mb-3",
+    style: {
+      background: "linear-gradient(135deg, rgba(216,132,60,0.15), rgba(122,72,120,0.15))",
+      border: "1px solid rgba(216,132,60,0.5)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e6b450",
+      fontSize: 12.5,
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, "\uD83E\uDD16 \u672C\u5C40\u672A\u63A5\u5165 AI \xB7 \u4F7F\u7528\u9884\u8BBE\u53F0\u8BCD"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e8d8a8",
+      fontSize: 11.5,
+      lineHeight: 1.55
+    }
+  }, "AI \u73A9\u5BB6\u53D1\u8A00\u4F1A\u6BD4\u8F83\u6A21\u677F\u5316\uFF08\u4E0D\u4F1A\u771F\u63A8\u7406\uFF09\u3002", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: "#88b070"
+    }
+  }, "\u771F\u6B63\u60F3\u4F53\u9A8C\u963F\u74E6\u9686\u9B45\u529B\uFF0C\u5EFA\u8BAE\u4E0B\u6B21\u53BB \u2699 AI \u8BBE\u7F6E\u63A5\u5165"), "\u2014\u2014\u667A\u8C31 GLM-4-Flash \u6C38\u4E45\u514D\u8D39\u3002")), /*#__PURE__*/React.createElement("button", {
     onClick: onConfirm,
     className: "w-full py-3 border-2 tracking-widest uppercase text-base rounded glow",
     style: {
@@ -10250,7 +10818,7 @@ function End({
       background: "rgba(42,20,40,0.4)",
       color: "#a8a058"
     }
-  }, "\uD83D\uDCA1 \u542F\u7528 DeepSeek API \u540E\uFF0C\u6BCF\u5C40\u7ED3\u675F\u4F1A\u81EA\u52A8\u751F\u6210 AI \u590D\u76D8\uFF0C\u5206\u6790\u5173\u952E\u8F6C\u6298\u70B9\u548C\u51B3\u7B56\u5F97\u5931\u3002"), /*#__PURE__*/React.createElement("div", {
+  }, "\uD83D\uDCA1 \u63A5\u5165 AI\uFF08\u667A\u8C31/DeepSeek/Kimi/\u5343\u5E06 \u4EFB\u4E00\u5BB6\uFF09\u540E\uFF0C\u6BCF\u5C40\u7ED3\u675F\u4F1A\u81EA\u52A8\u751F\u6210 AI \u590D\u76D8\uFF0C\u5206\u6790\u5173\u952E\u8F6C\u6298\u70B9\u548C\u51B3\u7B56\u5F97\u5931\u3002"), /*#__PURE__*/React.createElement("div", {
     className: "text-center mb-4 text-sm",
     style: {
       color: "#a8a058"
