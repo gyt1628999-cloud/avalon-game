@@ -144,7 +144,8 @@
 </tr>
 </table>
 
-![Roles](readme-assets/roles.png)
+<img width="1200" height="800" alt="roles" src="https://github.com/user-attachments/assets/9352817a-e58c-4f5d-8b5a-89ca9333ad7e" />
+
 
 ### 😎 这版本不一样在哪
 
@@ -237,7 +238,8 @@
 
 ### 🎲 一轮怎么玩
 
-![Flow](readme-assets/flow.png)
+<img width="1200" height="700" alt="flow" src="https://github.com/user-attachments/assets/7fd1f4bd-2b4e-49e7-95dc-3bd15941ebef" />
+
 
 ```
 1. 队长选 N 人组队（N 由本轮决定）
