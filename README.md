@@ -11,6 +11,9 @@
 
 [![React](https://img.shields.io/badge/React-18-61dafb?logo=react)](https://react.dev) [![DeepSeek](https://img.shields.io/badge/AI-DeepSeek_V4-7c3aed)](https://platform.deepseek.com) [![Kimi](https://img.shields.io/badge/AI-Kimi-ff6b00)](https://platform.moonshot.cn) [![Qianfan](https://img.shields.io/badge/AI-百度千帆-2932e1)](https://qianfan.baidubce.com) [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
+<img width="2549" height="1403" alt="7515d50c5e8b9cc2f7c9c45bd25dd58a" src="https://github.com/user-attachments/assets/7b60394a-2748-4566-b36f-cb8d8ec9fc6e" />
+
+
 [🇨🇳 中文](#-中文文档) · [🇬🇧 English](#-english)
 
 </div>
