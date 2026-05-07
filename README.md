@@ -1,7 +1,6 @@
 <div align="center">
 
-<img width="1200" height="360" alt="banner" src="https://github.com/user-attachments/assets/d5d6c544-e5cb-491a-95b5-571f054f90eb" />
-
+![Avalon Banner](readme-assets/banner.png)
 
 # 🏰 阿瓦隆 · Avalon
 
@@ -10,7 +9,7 @@
 **这不是联机游戏，也不是双人对战——你是桌上唯一的人类，其他几位"骑士"都是接入 AI 的真演员。**
 他们会装好人、装糊涂、互相 cue、合伙演戏。
 
-[![React](https://img.shields.io/badge/React-18-61dafb?logo=react)](https://react.dev) [![Solo](https://img.shields.io/badge/玩法-单人_vs_AI-7c3aed)]() [![Free](https://img.shields.io/badge/智谱GLM--4--Flash-永久免费-88b070)](https://bigmodel.cn) [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![React](https://img.shields.io/badge/React-18-61dafb?logo=react)](https://react.dev) [![Solo](https://img.shields.io/badge/玩法-单人_vs_AI-7c3aed)]() [![Free](https://img.shields.io/badge/智谱GLM--4--Flash-永久免费-88b070)](https://bigmodel.cn) [![Providers](https://img.shields.io/badge/AI厂商-7家-d8843c)]() [![Desktop](https://img.shields.io/badge/桌面版-Windows%20%2B%20Mac-blue?logo=electron)]() [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 [🇨🇳 中文](#-中文文档) · [🇬🇧 English](#-english)
 
@@ -40,10 +39,6 @@
 
 ---
 
-<img width="2549" height="1403" alt="2a1a5f7b44c79045d2055ff18e74afe1" src="https://github.com/user-attachments/assets/c786889e-84de-4904-abd3-6e087e8db185" />
-
-
-
 ## 🇨🇳 中文文档
 
 ### 💡 这个游戏到底是什么
@@ -54,7 +49,7 @@
 
 ### 🤖 桌上只有你一个人是真的
 
-打开游戏后，你会**坐进一个 5/6/7/8/9/10 人的桌子**——但其他人**全部是 AI**。
+打开游戏后，你会**坐进一个 7 人或 5/6/8/9/10 人的桌子**——但其他人**全部是 AI**。
 
 **这不是普通的"AI 当陪练"** ——这里的 AI 玩家**会真演戏**：
 
@@ -86,6 +81,42 @@
 </tr>
 </table>
 
+### 🎲 新特性 · 一桌 6 个 AI 用 6 家不同模型同台辩论
+
+> **每个 AI 玩家都可以单独选不同品牌+模型**——主打自由搭配。
+
+<table>
+<tr>
+<td width="60%">
+
+```
+🤖 玩家 2  →  智谱 GLM-4-Flash  🆓
+🤖 玩家 3  →  阿里 Qwen-Plus    🟢
+🤖 玩家 4  →  DeepSeek V4-Pro   💸
+🤖 玩家 5  →  Kimi K2.5         💸
+🤖 玩家 6  →  豆包 Doubao Mini  🟢
+🤖 玩家 7  →  📜 本地预设台词   🆓
+```
+
+听**风格各异的 AI** 跨家辩论——智谱直接简洁、Kimi 长篇推理、豆包接地气、阿里严谨、百川偏文学。
+
+</td>
+<td width="40%">
+
+#### 三个一键模式
+- 🔄 **全部用当前模型**——6 个 AI 都用同一家
+- 🎲 **随机搭配**——从已开通厂商里随机分配
+- ✗ **清空**——回到全局默认
+
+#### 智能特性
+- 复盘和建议**自动挑最快模型**
+- 模式切换时智能提醒重新配置
+- 续盘时还原本局的模型快照
+
+</td>
+</tr>
+</table>
+
 ### 🎮 你和 AI 怎么互动
 
 ```
@@ -95,7 +126,7 @@
 💡 建议模式     → 轮到你时，AI 给你"思路+话术"建议，你自己决定
                   ← 适合新手 / 不想敲字
 
-🤖 AI 代理      → AI 完全替你玩，你纯观战几个 AI 互相博弈
+🤖 AI 代理      → AI 完全替你玩，你纯观战 7 个 AI 互相博弈
                   ← 看 AI 之间的对决，能看到所有 AI 的"心声"
 ```
 
@@ -126,38 +157,53 @@
 
 ### 🚀 一分钟开始
 
-#### 方法 1：直接玩（最简单）
+#### 🌐 方法 1：浏览器版（最简单）
 ```
-下载 avalon.html → 双击打开 → 立刻能玩
-（无 AI 模式用本地预设台词，AI 会比较模板化）
+下载 avalon.html → 双击在浏览器打开 → 立刻能玩
 ```
 
-#### 方法 2：接入大模型 AI（强烈推荐）
+#### 🖥 方法 2：桌面版（Windows / Mac）
 ```
-1. 打开网页
-2. 点右上角 ⚙ AI 设置
-3. 选择 AI 服务商（推荐智谱 GLM——有永久免费模型）
-4. 复制 API Key 填入
-5. 点"测试 Key" → 绿色 ✓ → 开始游戏
+下载 release 里的 .exe / .dmg → 双击安装 → 双击图标玩
+```
+> 桌面版好处：不用浏览器、跨域稳、有自己的 Dock/任务栏图标。
+> 编译说明见仓库里的 `electron-app/README.md`。
+
+#### 🤖 方法 3：接入大模型 AI（强烈推荐）
+```
+1. 打开网页或桌面版
+2. 点 ⚙ AI 设置
+3. 选择 1-7 家大模型（推荐先填免费的智谱 GLM）
+4. 复制 API Key 填入 → 点"测试 Key" → 绿色 ✓
+5. （可选）展开「🎲 高级 · 每个 AI 玩家单独选模型」自由搭配
+6. 开始游戏
 ```
 
 ### 💰 接入大模型多少钱
 
 接入 AI 后游戏体验完全不同——AI 会真实推理、装好人、用情绪词。**强烈推荐至少试一次**。
 
-| AI 服务商 | 价格 | 特点 | 推荐场景 |
+| AI 服务商 | 价格档位 | 特点 | 推荐场景 |
 |----|----|----|----|
 | 🆓 **智谱 GLM** | **GLM-4-Flash 永久免费** + 实名送 500 万 Token | 清华团队·中文最强 | **首推！0 成本玩** |
-| 🆓 **百度千帆** | 新用户免费额度 | 国内访问最稳 | 备选 |
-| 💰 **DeepSeek V4** | ¥10 起，按量付费 | 推理质量最好 | 想要顶级体验 |
-| 💰 **Kimi** | ¥1 起，按量付费 | 中文最地道 | 想要文学性发言 |
+| 🟠 **阿里通义** | 新用户每模型送千万级免费 token，90 天 | 国产顶级旗舰 Qwen3-Max | **个人开发者最友好** |
+| 🆓 **百度千帆** | X1-Turbo 免费 + 实名送额度 | 国内访问最稳 | 备选免费 |
+| 🐳 **DeepSeek** | ¥10 起，按量付费 | 推理质量国产顶尖 | 想要顶级体验 |
+| 🌙 **Kimi** | ¥1 起，按量付费 | K2.5/K2.6 推理强 | 想要长篇文学发言 |
+| 🔴 **字节豆包** | 价格便宜 10 倍 | Doubao Lite/Mini 极便宜 | 想要海量便宜对局 |
+| 🟣 **百川** | 实名送 80 元代金券 | Baichuan4 中文写作好 | 想要文学性发言 |
 
-> 💡 一局游戏大约消耗 ¥0.1-0.3（付费模型）；智谱 GLM-4-Flash **完全 0 成本**
+**🎯 价格档位标识**（每个模型名后会标）：
+- 🆓 永久免费 / 有免费额度
+- 🟢 便宜（每局几分钱）
+- 💸 稍贵（每局几毛钱）
+- 💎 贵（每局 ¥1+）
+
+> 💡 **0 成本玩法**：智谱 GLM-4-Flash 永久免费 + 阿里 Qwen-Turbo/Flash 免费额度 + 百度 X1-Turbo 免费——三家全填，**完全不用充值**就能体验跨家 AI 辩论。
 
 ### 🃏 你和 AI 玩家会扮演哪些角色
 
-<img width="1200" height="800" alt="roles" src="https://github.com/user-attachments/assets/573b60ce-8fe5-4e36-9367-ce3e6422e095" />
-
+![Roles](readme-assets/roles.png)
 
 每局游戏里，你和 AI 会**随机分到角色**——你可能是梅林、刺客、奥伯伦……AI 们会拿到剩下的角色。
 
@@ -254,8 +300,7 @@
 
 ### 🎲 一轮怎么玩
 
-<img width="1200" height="700" alt="flow" src="https://github.com/user-attachments/assets/585bdf88-547f-4fd9-be71-d1f2974d738e" />
-
+![Flow](readme-assets/flow.png)
 
 ```
 1. 队长选 N 人组队（队长可能是你、也可能是 AI）
@@ -322,25 +367,36 @@
 ### 🛠 技术栈
 
 - **前端**：单文件 React 18 + Tailwind CSS（无构建步骤！）
-- **AI 接入**：智谱 GLM / DeepSeek V4 / Kimi / 百度千帆（OpenAI 兼容 API）
+- **AI 接入**：7 家 OpenAI 兼容 API（智谱 / 阿里通义 / DeepSeek / Kimi / 千帆 / 豆包 / 百川）
 - **存储**：浏览器 localStorage（API Key 不上传服务器）
 - **部署**：纯静态 HTML，可部署到任何静态服务器
+- **桌面打包**：Electron 32 + electron-builder（Windows + Mac）
 
 ### 📂 项目结构
 
 ```
 avalon/
-├── avalon.html          ← 整个游戏（一个文件，约 7000 行）
-├── index.html           ← 同上的副本（GitHub Pages 入口）
-├── README.md            ← 项目介绍
+├── avalon.html                 ← 整个游戏（一个文件，约 8500 行 React）
+├── index.html                  ← 同上的副本（GitHub Pages 入口）
+├── README.md                   ← 项目介绍
 ├── readme-assets/
-│   ├── banner.png       ← 顶部横幅
-│   ├── roles.png        ← 角色介绍图
-│   └── flow.png         ← 流程图
-└── 阿瓦隆-1分钟入门.pdf   ← 速查手册（A4 单页）
+│   ├── banner.png              ← 顶部横幅
+│   ├── roles.png               ← 角色介绍图
+│   └── flow.png                ← 流程图
+├── 阿瓦隆-1分钟入门.pdf          ← 速查手册（A4 单页）
+└── electron-app/               ← 桌面 app 项目（可选）
+    ├── package.json
+    ├── main.js                 ← Electron 主进程
+    ├── preload.js
+    ├── avalon.html             ← 编译后的 standalone 单文件
+    ├── README.md               ← 桌面版打包说明
+    └── build/
+        ├── icon.svg            ← 矢量原图
+        ├── icon.ico/.icns/.png ← 各平台图标
+        └── regenerate_icons.py ← 一键重生成所有分辨率
 ```
 
-### 🚀 部署到 GitHub Pages
+### 🚀 部署到 GitHub Pages（浏览器版）
 
 ```bash
 # 1. fork / 创建一个新 repo
@@ -348,6 +404,28 @@ avalon/
 # 3. Settings → Pages → Source 选 main 分支 / root → Save
 # 4. 等 1-2 分钟，访问 https://你的用户名.github.io/repo名/
 ```
+
+### 🖥 自己打包桌面版（Windows / Mac）
+
+详细教程见 [`electron-app/README.md`](electron-app/README.md)。简版：
+
+```bash
+cd electron-app
+npm install                # 第一次会下 Electron ~250 MB
+npm start                  # 先跑一下试试
+npm run dist:win           # 打 Windows .exe（要在 Windows 上跑）
+npm run dist:mac           # 打 Mac .dmg（要在 Mac 上跑）
+```
+
+打包产物在 `electron-app/dist/`：
+- `AI阿瓦隆-Windows-1.0.0-x64.exe`（NSIS 安装版）
+- `AI阿瓦隆-便携版-1.0.0.exe`（绿色版，单文件）
+- `AI阿瓦隆-Mac-1.0.0-x64.dmg` / `arm64.dmg`
+
+**⚠️ 国内打包注意**：
+- 第 1 步先设镜像：`npm config set registry https://registry.npmmirror.com`
+- 设环境变量：`$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"`（PowerShell）
+- Windows 打 exe 报符号链接错？**开 Windows 开发者模式**（设置→开发人员设置→打开开关），一次性永久解决
 
 ### 🤔 常见问题
 
@@ -406,12 +484,52 @@ avalon/
 <details>
 <summary><b>怎么修改游戏规则 / AI 策略？</b></summary>
 
-所有逻辑都在 `avalon.html` 一个文件里：
-- 角色配置：搜 `ROLE_DEFS` / `ROLE_COMPOSITIONS`
-- AI 策略 prompt：搜 `strategy` 关键字
-- 发言铁律：搜 "铁律 A"
+整个游戏在 `avalon.html` 一个文件里（约 8500 行）。所有 AI prompt 都在文件里搜：
+- `qianfan` / `kimi` / `zhipu` / `qwen` / `doubao` / `baichuan` —— 各家专属 prompt 强化
+- `aiSpeakViaAPI` —— AI 玩家发言主流程
+- `aiAssassinate` —— 刺客刺梅林
+- `aiRecapViaAPI` —— 复盘生成
 
-直接改完保存，浏览器刷新即可生效（无需构建）。
+直接改保存即可，不用编译。
+
+</details>
+
+<details>
+<summary><b>桌面版和浏览器版有什么区别？</b></summary>
+
+**功能完全一样**——同一份 `avalon.html`。区别在：
+
+- 🌐 **浏览器版**：双击 .html 文件即开。Key 和存档存在浏览器 localStorage。
+- 🖥 **桌面版**：独立 .exe / .app，有自己的 Dock/任务栏图标。Key 和存档存在系统目录（Win: `%APPDATA%\AI 阿瓦隆\`；Mac: `~/Library/Application Support/AI 阿瓦隆/`）。**清浏览器缓存不会丢数据**。
+- ⚡ **跨域**：桌面版禁用了 webSecurity，**跨域请求更稳**。
+
+强烈推荐桌面版作为长期使用，浏览器版作为快速试玩。
+
+</details>
+
+<details>
+<summary><b>"一桌 6 个 AI 用 6 家不同模型" 怎么开？</b></summary>
+
+1. 进 ⚙ AI 设置
+2. 至少填 2 家以上的 API Key（比如智谱 + 阿里 + 豆包）
+3. 在「🎲 高级 · 每个 AI 玩家单独选模型」按钮（位置在 AI 学习进度和提供商之间）点开弹窗
+4. 给每个 AI 玩家选不同的厂商+模型——也可以选「📜 本地预设台词」让某个 AI 不接大模型
+5. 点完成 → 开始游戏
+
+游戏中顶栏会显示「多家 AI 协同（N 家）」，AI 失败时会精确显示哪个座位、哪个厂商、哪个模型挂了。
+
+</details>
+
+<details>
+<summary><b>哪几家是免费的？怎么 0 成本玩？</b></summary>
+
+**永久免费**：智谱 GLM-4-Flash
+
+**有大量免费额度**（实名认证后送）：
+- 阿里通义：每个模型送千万级 token，90 天
+- 百度千帆：X1-Turbo-32K 等
+
+**完全 0 成本玩法**：把上面三家 Key 都填了，进「🎲 高级 · 每个 AI 玩家单独选模型」，给 6 个 AI 配上面三家的免费模型——一桌 AI 跨家辩论，**钱包毫发无伤**。
 
 </details>
 
@@ -486,28 +604,46 @@ Not your usual "AI chatbot" — these AI players **actually act**:
 💡 Advice mode   → AI gives you "thinking + speech" suggestions when it's your turn
                    ← Beginner-friendly
 
-🤖 AI agent      → AI plays for you; you watch several AIs battle each other
+🤖 AI agent      → AI plays for you; you watch 7 AIs battle each other
                    ← See AI vs AI, all "inner voices" visible
 ```
 
 ### 🚀 Quick start
 
 ```bash
-# Method 1: Just download (simplest)
-Download avalon.html → Double-click → Play (no AI, uses local presets)
+# Method 1: Browser version (simplest)
+Download avalon.html → Double-click → Play
 
-# Method 2: With AI (recommended)
+# Method 2: Desktop version (Windows / Mac)
+Download .exe / .dmg from Releases → Install → Launch
+
+# Method 3: With AI (recommended, much better experience)
 Open page → ⚙ AI Settings → Pick provider → Enter API Key → Test
 ```
 
-**4 AI providers** (only one active at a time):
+**7 AI providers** (mix and match per-seat):
 
-| Provider | Price | Notes |
+| Provider | Pricing | Notes |
 |----|----|----|
 | 🆓 **Zhipu GLM** | **GLM-4-Flash forever free** + 5M tokens after ID verification | Tsinghua team, best Chinese; **TOP PICK** |
-| 🆓 **Baidu Qianfan** | Free quota for new users | Most stable in China |
-| 💰 **DeepSeek V4** | Pay-as-you-go, ¥10 minimum | Strong reasoning |
-| 💰 **Kimi** | Pay-as-you-go, ¥1 minimum | Best Chinese expression |
+| 🟠 **Aliyun Qwen** | Generous free tokens per model (90 days) | Most developer-friendly |
+| 🆓 **Baidu Qianfan** | X1-Turbo free + bonus quota | Most stable in China |
+| 🐳 **DeepSeek** | Pay-as-you-go, ¥10 minimum | Strongest reasoning |
+| 🌙 **Kimi** | Pay-as-you-go, ¥1 minimum | Best literary expression (K2.5/K2.6) |
+| 🔴 **Doubao (ByteDance)** | 10× cheaper than competitors | Lite/Mini for cheap mass play |
+| 🟣 **Baichuan** | ¥80 voucher for verified users | Strong Chinese writing |
+
+**🎲 New Feature**: Mix providers — assign different model to each AI seat for cross-vendor debates.
+
+### 🖥 Desktop version
+
+We package the game as Electron app for Windows/Mac. See `electron-app/README.md` for detailed build instructions.
+
+```bash
+cd electron-app
+npm install
+npm run dist:win    # or dist:mac
+```
 
 ### 🃏 Roles
 
@@ -546,9 +682,10 @@ Open page → ⚙ AI Settings → Pick provider → Enter API Key → Test
 ### 🛠 Tech stack
 
 - **Frontend**: Single-file React 18 + Tailwind CSS (no build step!)
-- **AI**: Zhipu GLM / DeepSeek V4 / Kimi / Baidu Qianfan (OpenAI-compatible API)
-- **Storage**: Browser localStorage (no server upload)
-- **Deploy**: Pure static HTML, deploy anywhere
+- **AI**: 7 OpenAI-compatible providers (Zhipu / Qwen / DeepSeek / Kimi / Qianfan / Doubao / Baichuan)
+- **Storage**: Browser localStorage (no server upload, all keys local)
+- **Web deploy**: Pure static HTML, deploy anywhere
+- **Desktop**: Electron 32 + electron-builder, Windows + Mac packaging
 
 ### 🚀 Deploy to GitHub Pages
 
